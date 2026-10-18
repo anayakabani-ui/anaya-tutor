@@ -1,0 +1,196 @@
+CONNECTING GOOGLE CALENDAR AND CLASSROOM
+========================================
+
+What this does: the tutor on the laptop reads your Google Calendar and your
+Google Classroom four times a day, and whenever you press Sync now. It
+shows up on the School tab of the web app, and Classroom homework counts on
+the Subjects tab. Nothing is added to your list unless you press "Add to my
+list".
+
+Classroom is read only: it can't change or hand in anything.
+
+Calendar: it can also WRITE a date for you (a test, a homework due date),
+but only when you ask, and only after it has shown you the exact words and
+you've said yes. It can change or take off dates it wrote itself. It never
+changes or deletes anything else on your calendar. See PART 5.
+
+About 10 minutes. Do the parts in order.
+
+
+PART 1: SWITCH THE TWO GOOGLE SERVICES ON
+-----------------------------------------
+1.  In Chrome, paste this into the address bar and press Enter:
+      https://console.cloud.google.com/apis/library/calendar-json.googleapis.com?project=tutor-anaya
+    If it asks you to pick an account, pick the SAME one you used for
+    Firebase. If it asks you to agree to terms, tick the box, click
+    "Agree and continue".
+2.  Click the blue "Enable" button. Wait until it says "API Enabled".
+3.  Paste this into the address bar and press Enter:
+      https://console.cloud.google.com/apis/library/classroom.googleapis.com?project=tutor-anaya
+4.  Click the blue "Enable" button. Wait until it says "API Enabled".
+
+
+PART 2: THE PERMISSION SCREEN
+-----------------------------
+5.  Paste this into the address bar and press Enter:
+      https://console.cloud.google.com/auth/overview?project=tutor-anaya
+6.  Click "Get started".
+7.  App name: type  Tutor
+    User support email: pick your email from the list. Click "Next".
+8.  Audience: pick "External". Click "Next".
+9.  Contact information: type your email. Click "Next".
+10. Tick "I agree". Click "Continue", then "Create".
+11. On the left, click "Audience".
+12. Under "Publishing status" click "Publish app", then "Confirm".
+    (This matters. Without it Google makes you connect again every week.)
+
+
+PART 3: THE KEY FOR THE LAPTOP
+------------------------------
+13. On the left, click "Clients".
+14. Click "Create client".
+15. Application type: pick "Desktop app".
+16. Name: type  tutor-laptop   Click "Create".
+17. A box shows "Client ID" and "Client secret". Leave it open.
+18. Open the folder with main.py in it. Right click  firebase_config.json
+    and open it with Notepad.
+19. Put a comma at the very end of the "password" line if there isn't one.
+20. Under that line, add these two lines. Copy the Client ID between the
+    first pair of quote marks and the Client secret between the second:
+
+      "googleClientId": "",
+      "googleClientSecret": ""
+
+    The LAST line before the closing } must NOT end in a comma.
+    It should end up looking like this (your own values in the gaps):
+
+      {
+        "apiKey": "...",
+        "projectId": "tutor-anaya",
+        "email": "...",
+        "password": "",
+        "googleClientId": "1234-abcd.apps.googleusercontent.com",
+        "googleClientSecret": "GOCSPX-..."
+      }
+
+21. Press Ctrl+S. Close Notepad.
+22. Right click the cat, click "Restart the tutor".
+
+
+PART 4: SAY YES
+---------------
+23. Right click the cat.
+24. Click "Connect Google". Chrome opens.
+    (If nothing opens, click the Log tab in the tutor. It says why.)
+25. Pick the account your Classroom is on (your school one).
+26. It says "Google hasn't verified this app". That's because it's your
+    own app. Click "Advanced", then "Go to Tutor (unsafe)".
+27. Tick every box it shows. Click "Continue".
+28. The tab says "Google is connected. You can close this tab." Close it.
+29. Open the web app, click "School". Within a minute it says
+    "Last checked" with the time.
+
+
+PART 5: LETTING IT WRITE DATES ON YOUR CALENDAR
+-----------------------------------------------
+You only do this once. If you connected Google before 3 October's update,
+the tutor can read your calendar but not write on it yet.
+
+30. Right click the cat.
+31. Click "Connect Google". Chrome opens.
+32. Pick the same account as before.
+33. "Google hasn't verified this app": click "Advanced", then
+    "Go to Tutor (unsafe)".
+34. There is now one more box, about your calendar events
+    ("View and edit events on all your calendars"). Tick EVERY box,
+    that one too. Click "Continue".
+35. The tab says "Google is connected. You can close this tab." Close it.
+36. Wait one minute. Open the web app, click "School". Under
+    "Put a date on Google Calendar" there is now a box to type in.
+
+How to use it, on the web app:
+    Type what it is, pick the day, click "Show me what it will write".
+    Read the words. Click "Write it", or "Don't".
+How to use it, in the tutor's chat on the laptop:
+    Type:  put physics test on my calendar 12 oct
+    It says exactly what it will write. Type  yes  or  no.
+    To change one it wrote:  move physics test on my calendar to 14 oct
+    To remove one it wrote:  take physics test off my calendar
+A time is optional:  put french oral on my calendar 14 oct at 9:30
+
+You did NOT need to change anything in Google Cloud for this.
+
+
+PART 6: WHEN SCHOOL IT SAYS YES (SWITCHING TO YOUR SCHOOL ACCOUNT)
+------------------------------------------------------------------
+What to send IT, so they can allow the app. They need the Client ID
+(NOT the secret. Never send anyone the secret.):
+
+    a. Open the folder with main.py in it. Right click
+       firebase_config.json, open it with Notepad.
+    b. Copy what's between the quote marks after "googleClientId".
+       It ends in  .apps.googleusercontent.com
+    c. Close Notepad WITHOUT saving.
+    d. Send IT that, and tell them: "Please mark this OAuth Client ID as
+       Trusted in the Google Admin console, under Security, API controls,
+       App access control. It needs Calendar and Classroom."
+       The privacy page for them to read is:
+       https://anaya-tutor.netlify.app/privacy.html
+
+When they say it's done:
+
+37. Right click the cat.
+38. Click "Connect Google". Chrome opens. You do NOT need to press
+    Disconnect first.
+39. It shows a list of accounts. Click your SCHOOL one. If it isn't in
+    the list, click "Use another account" and sign in with the school
+    email.
+40. If it says "Google hasn't verified this app": "Advanced", then
+    "Go to Tutor (unsafe)". (Once IT has trusted it, this may not show.)
+41. Tick every box. Click "Continue".
+42. The tab says "Google is connected. You can close this tab." Close it.
+43. Wait one minute. On the web app's School tab the "Calendar:" line
+    now shows your school email, and Classroom fills in.
+
+Good to know:
+    The tutor is connected to ONE Google account at a time. Connecting
+    the school one replaces your own one. To go back, press Connect
+    Google again and pick the other account.
+    Dates the tutor wrote on your OWN calendar stay there. While the
+    school account is connected it leaves those alone, because they
+    belong to the other account.
+    If the School tab ever says "Google cancelled the connection", just
+    press Connect Google again. Nothing is lost.
+
+
+IF IT GOES WRONG
+----------------
+"Something went wrong" or "Access blocked" when you tick the calendar box
+with the SCHOOL account:
+    School allows reading but not writing. Press Connect Google again
+    and leave the calendar events box unticked. Reading still works; the
+    tutor will say it can't write.
+
+The tutor says "I can only read your calendar at the moment":
+    Do PART 5. The calendar events box wasn't ticked.
+
+"That didn't go on your Google Calendar: ... Calendar API has not been
+used" or "403":
+    Do steps 1 and 2 again (the Calendar "Enable" button).
+
+"Access blocked" or "admin policy" in step 25 to 27:
+    Your school doesn't let outside apps read Classroom. Nothing you can
+    do from your side. Do steps 23 to 28 again with your own Gmail
+    instead: you still get your personal calendar.
+
+The School tab says "Problem: Classroom: 403 ...":
+    Same thing: the school blocks Classroom. The calendar still works.
+
+"Error 400: redirect_uri_mismatch":
+    In step 15 something other than "Desktop app" was picked. Do steps 13
+    to 22 again and pick "Desktop app".
+
+The tutor's Log tab says the sync port isn't open:
+    Restart the tutor and press Connect Google again.
+
+To switch it off: right click the tutor's tray icon, "Disconnect Google".
