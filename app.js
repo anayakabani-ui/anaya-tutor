@@ -114,7 +114,7 @@ const state = { tasks: [], exams: [], timetable: [], visits: [], day: null, meta
                 dragging: false, calStale: false, calDrag: null,
                 notes: null,           // live/notes off the laptop
                 // 2026-10-17: the bank's folds, the repeat form, the chat.
-                bankShut: new Set(), bankGroupsOpen: new Set(), calRepeat: null, calMulti: [], calMultiRepeat: false, calHidePast: false,
+                bankShut: new Set(), bankGroupsOpen: new Set(), calRepeat: null, calDelete: null, delWaiting: new Map(), calMulti: [], calMultiRepeat: false, calHidePast: false,
                 chat: [], chatSeen: false, chatWaiting: [],
                 // 2026-10-17b: events changed here, waiting for the laptop
                 // (id -> {day, title, start, end, atMs}); the one being
@@ -140,6 +140,22 @@ async function sendEdit(edit) {
 
 // One note, like the real app: a box in the margin, her order, her gaps.
 // onTick, when given, makes the boxes real buttons.
+// 2026-10-18e: "yeasssss please" to a faster pickup. While this page is
+// open in front of her, a stamp goes in meta/inbox every 30 seconds; the
+// laptop looks every few seconds for as long as the stamps keep coming.
+const SITE_BEAT_MS = 30000;
+let siteBeatAt = 0;
+async function siteBeat() {
+  if (!cloud || document.visibilityState !== "visible") return;
+  if (Date.now() - siteBeatAt < SITE_BEAT_MS - 1000) return;
+  siteBeatAt = Date.now();
+  try {
+    await setDoc(doc(cloud.db, cloud.base + "meta/inbox"), { open: isoNow(new Date()) }, { merge: true });
+  } catch (error) { siteBeatAt = 0; }
+}
+setInterval(siteBeat, SITE_BEAT_MS);
+document.addEventListener("visibilitychange", () => { siteBeatAt = 0; siteBeat(); });
+
 function noteCard(lines, emptyText, onTick) {
   const card = el("div", "note");
   if (!lines.some((l) => l.kind === "line")) {
@@ -432,7 +448,7 @@ function savedFold() {
     const top = el("div", "choices");
     top.append(button("Save everything now", "soft", async () => {
       state.savedSent = (await sendEdit({ kind: "snapshot" }))
-        ? "Asked the laptop to save a copy. It shows here in about 20 seconds while the tutor is open."
+        ? "Asked the laptop to save a copy. It shows here in a few seconds while the tutor is open."
         : "Couldn't send that. Are you online?";
       drawTasks();
     }));
@@ -452,7 +468,7 @@ function savedFold() {
           if (!asking) { state.goBack = copy.id; drawTasks(); return; }
           state.goBack = null;
           state.savedSent = (await sendEdit({ kind: "restore", snapshot: Number(copy.id) }))
-            ? "Sent. Your list changes on the laptop in about 20 seconds while the tutor is open."
+            ? "Sent. Your list changes on the laptop in a few seconds while the tutor is open."
             : "Couldn't send that. Are you online?";
           drawTasks();
         }));
@@ -582,7 +598,7 @@ function drawTasks() {
     }
   });
   box.append(adder);
-  box.append(el("p", "muted", "Ticks and new tasks reach the laptop in about 20 seconds while the tutor is open."));
+  box.append(el("p", "muted", "Ticks and new tasks reach the laptop in a few seconds while the tutor is open."));
   box.append(historyFold("main", "Task history"));
   box.append(savedFold());
   if (focused) field.focus();
@@ -607,7 +623,7 @@ function moveLine(pick, to) {
   if (problem) { state.calSaid = problem; drawCalendar(); return Promise.resolve(false); }
   state.moves = addMove(state.moves, { text: pick.text, from: pick.from, to, atMs: Date.now() });
   state.calSaid = (to === BANK ? "Put in the bank" : "Moved to " + dayHead(to, now)) +
-    ". The laptop takes it in about 20 seconds while the tutor is open.";
+    ". The laptop takes it in a few seconds while the tutor is open.";
   drawCalendar();
   // 2026-10-15c: into or out of the task bank.
   const kind = to === BANK ? "bank_put" : pick.from === BANK ? "bank_take" : "day_move";
@@ -658,7 +674,12 @@ function subjectFor(line) {
   // line's words (ignoring its worth and "(optional)"), a "do 1 from [X]"
   // card, and a line that starts "physics:".
   const raw = String((line && (line.text || line.raw)) || "").replace(/^>\s*/, "").trim();
-  const words = raw.replace(/\s*\[\d+\]\s*$/, "").replace(/\s*\(optional\)\s*$/i, "").trim().toLowerCase();
+  // 2026-10-18e: a copy ("words (2)") has its subject's colour too.
+  let words = raw;
+  for (let i = 0; i < 3; i += 1) {
+    words = words.replace(/\s*\[\d+\]\s*$/, "").replace(/\s*\(optional\)\s*$/i, "").replace(/\s*\(\d{1,2}\)\s*$/, "");
+  }
+  words = words.trim().toLowerCase();
   if (subjectOfLine.has(words)) return subjectOfLine.get(words);
   const pick = /^do 1 from \[([^\]]+)\]/i.exec(raw);
   if (pick) return pick[1].trim();
@@ -706,7 +727,7 @@ function dropEvent(e) {
 
 // 2026-10-17b: "click, adjust name, and drag its time start and extend via
 // a pull its length", like Google Calendar. Shown at once here; the laptop
-// takes it in about 20 seconds.
+// takes it in a few seconds.
 function editEvent(e, change) {
   if (!e || String(e.id).startsWith("w")) {
     state.calSaid = "One sec, that event's still being saved.";
@@ -916,7 +937,7 @@ function addTaskBox(day, list) {
     state.calAdding = "";
     if (!text) { drawCalendar(); return; }
     state.addsWaiting = state.addsWaiting.concat([{ day, list: list || "", text, atMs: Date.now() }]);
-    state.calSaid = "Added \u201c" + text + "\u201d. The laptop puts it in in about 20 seconds.";
+    state.calSaid = "Added \u201c" + text + "\u201d. The laptop puts it in in a few seconds.";
     drawCalendar();
     sendEdit(list ? { kind: "bank_add", text, list } : { kind: "day_add", day, text });
   };
@@ -1152,7 +1173,7 @@ function drawTimes(box, days, found, now, pick) {
 }
 
 // 2026-10-16m: the "Do 1 from [LIST]" card dropped on a day. The line
-// goes on that day; the laptop puts it there in about 20 seconds.
+// goes on that day; the laptop puts it there in a few seconds.
 function pickToDay(pick, to) {
   const now = new Date();
   state.calPick = null;
@@ -1160,7 +1181,7 @@ function pickToDay(pick, to) {
   const problem = moveProblem(pick.text, BANK_PICK, to, now);
   if (problem) { state.calSaid = problem; drawCalendar(); return Promise.resolve(false); }
   state.calSaid = "\u201c" + pick.text + "\u201d goes on " + dayHead(to, now) +
-    ". The laptop takes it in about 20 seconds while the tutor is open.";
+    ". The laptop takes it in a few seconds while the tutor is open.";
   drawCalendar();
   return sendEdit({ kind: "bank_pick", text: pick.text, from: BANK, to }).then((sent) => {
     if (sent) return true;
@@ -1282,6 +1303,11 @@ function pickCard(name) {
 // One line on the calendar or in the bank: drag it, or press it to pick it.
 function calLine(line, dayId, past, pick) {
   const head = line.kind === "head";
+  if (deleting(dayId, line.raw)) {                    // 2026-10-18e
+    const gone = el("p", "plan-line deleting", (line.sub ? "> " : "") + line.text);
+    gone.title = "Deleting. The laptop takes it off in a few seconds.";
+    return gone;
+  }
   const can = !past && !line.done && !line.sub;
   const picked = pick && pick.text === line.raw && pick.from === dayId;
   const item = el(can ? "button" : "p", "plan-line" + (head ? " head" : "") + (line.done ? " done" : "") +
@@ -1304,6 +1330,7 @@ function calLine(line, dayId, past, pick) {
     // 2026-10-18c: shift-click picks several at once (to repeat or bank them).
     if (ev.shiftKey && !line.repeat) { toggleMulti(line.raw, dayId); return; }
     state.calPick = picked ? null : { text: line.raw, from: dayId, repeat: Boolean(line.repeat) };
+    state.calDelete = null;
     state.calSaid = "";
     state.calRepeat = null;
     drawCalendar();
@@ -1398,7 +1425,7 @@ function drawPlanCheck(box, found) {
       state.goalsWaiting.set(row.name, { count, by: allBy.value, atMs: Date.now() });
       sendEdit({ kind: "bank_goal", list: row.name, count, by: allBy.value });
     });
-    state.calSaid = "Set on every list. The laptop takes it in about 20 seconds.";
+    state.calSaid = "Set on every list. The laptop takes it in a few seconds.";
     drawCalendar();
   });
   all.append(el("span", "muted", "Finish"), allCount, el("span", "muted", "from every list by"), allBy, allGo);
@@ -1438,7 +1465,7 @@ function drawPlanCheck(box, found) {
 // 2026-10-17: split and repeat, picked on the calendar.
 function splitPicked(pick, parts) {
   state.calPick = null;
-  state.calSaid = "Splitting into " + parts.n + " \u00d7 \u201c" + parts.one + "\u201d. The laptop does it in about 20 seconds.";
+  state.calSaid = "Splitting into " + parts.n + " \u00d7 \u201c" + parts.one + "\u201d. The laptop does it in a few seconds.";
   drawCalendar();
   return sendEdit({ kind: "line_split", day: pick.from, text: pick.text, n: parts.n, one: parts.one });
 }
@@ -1464,7 +1491,7 @@ function multiBar() {
     const picked = state.calMulti.filter((m) => m.from !== BANK);
     state.calMulti = [];
     state.calMultiRepeat = false;
-    state.calSaid = "Putting " + picked.length + " in the bank. The laptop takes them in about 20 seconds.";
+    state.calSaid = "Putting " + picked.length + " in the bank. The laptop takes them in a few seconds.";
     picked.forEach((m) => moveLine({ text: m.text, from: m.from }, BANK));
     drawCalendar();
   }));
@@ -1497,7 +1524,7 @@ function multiRepeatForm() {
     state.calMultiRepeat = false;
     state.calSaid = "Repeating " + list.length + " " + (list.length === 1 ? "task" : "tasks") + " " +
       repeatWords({ every: n, unit: unit.value }) + (until.value ? " until " + dayHead(until.value, new Date()) : "") +
-      ". The laptop sets them up in about 20 seconds.";
+      ". The laptop sets them up in a few seconds.";
     drawCalendar();
     list.forEach((m) => sendEdit({ kind: "repeat_add", day: m.from === BANK || m.from === BANK_PICK ? today : m.from,
       text: m.text, until: until.value || "", times: 1, one: "", every: n, unit: unit.value }));
@@ -1539,7 +1566,7 @@ function repeatForm(pick, parts) {
     state.calPick = null;
     state.calSaid = "Repeating \u201c" + (times > 1 ? parts.one + "\u201d \u00d7 " + times : pick.text + "\u201d") +
       " " + repeatWords({ every: n, unit: unit.value }) +
-      (until.value ? " until " + dayHead(until.value, new Date()) : "") + ". The laptop sets it up in about 20 seconds.";
+      (until.value ? " until " + dayHead(until.value, new Date()) : "") + ". The laptop sets it up in a few seconds.";
     drawCalendar();
     sendEdit({ kind: "repeat_add", day: pick.from, text: pick.text, until: until.value || "",
                times, one: times > 1 ? parts.one : "", every: n, unit: unit.value });
@@ -1550,7 +1577,7 @@ function repeatForm(pick, parts) {
 function stopRepeat(text) {
   text = String(text).replace(/\s+\(every [^)]*\)$/, "");    // an hourly one's label
   state.calPick = null;
-  state.calSaid = "Stopped. \u201c" + text + "\u201d won't come back (the laptop takes it in about 20 seconds).";
+  state.calSaid = "Stopped. \u201c" + text + "\u201d won't come back (the laptop takes it in a few seconds).";
   drawCalendar();
   return sendEdit({ kind: "repeat_stop", text });
 }
@@ -1560,12 +1587,12 @@ function swapDays(one, two) {
   const now = new Date();
   // 2026-10-16e: "ive clicked swap here, tasks didnt swap". It waited for
   // the laptop with nothing to show. Now it's swapped here at once (locked
-  // lines stay), and the laptop does the same in about 20 seconds.
+  // lines stay), and the laptop does the same in a few seconds.
   const found = allDays(state.alldays);
   state.swaps = state.swaps.concat([{ one, two, atMs: Date.now(),
     before: { one: swapSig(found, one), two: swapSig(found, two) } }]);
   state.calSaid = "Swapped " + dayHead(one, now) + " and " + dayHead(two, now) +
-    ". Locked tasks stayed put. The laptop takes it in about 20 seconds while the tutor is open.";
+    ". Locked tasks stayed put. The laptop takes it in a few seconds while the tutor is open.";
   drawCalendar();
   sendEdit({ kind: "day_swap", text: "", from: one, to: two }).then((sent) => {
     if (sent) return;
@@ -1585,6 +1612,31 @@ function locksNow(found) {
     if (w.locked) out.add(key); else out.delete(key);
   });
   return out;
+}
+
+// 2026-10-18e: delete a task off its day. The "> bits" under it go too.
+function askDelete(pick) {
+  state.calDelete = dayKey(pick.from, pick.text);
+  state.calSaid = "Delete \u201c" + pick.text + "\u201d off " + dayHead(pick.from, new Date()) + "?";
+  drawCalendar();
+}
+function deleteLine(day, text) {
+  const key = dayKey(day, text);
+  state.delWaiting.set(key, Date.now());
+  state.calDelete = null;
+  state.calPick = null;
+  state.calSaid = "Deleted \u201c" + text + "\u201d. The laptop takes it off in a few seconds while the tutor is open.";
+  drawCalendar();
+  sendEdit({ kind: "day_del", day, text }).then((sent) => {
+    if (sent) return;
+    state.delWaiting.delete(key);
+    state.calSaid = "Couldn't send that. Are you online?";
+    drawCalendar();
+  });
+}
+function deleting(day, text) {
+  const at = state.delWaiting.get(dayKey(day, text));
+  return Boolean(at) && Date.now() - at < 120000;
 }
 
 function lockLine(day, text, locked) {
@@ -1615,6 +1667,7 @@ function icon(name) {
     unlock: ["M4.5 7.5h7v6h-7z", "M6 7.5V5.5a2 2 0 0 1 3.8-.9"],
     sliders: ["M2.5 4.5h11", "M2.5 8h11", "M2.5 11.5h11", "M5.5 3v3", "M10.5 6.5v3", "M7 10v3"],
     plus: ["M8 3v10", "M3 8h10"],
+    bin: ["M3 4.5h10", "M6.5 4.5V3h3v1.5", "M4.5 4.5l.7 8.5h5.6l.7-8.5", "M7 7v4", "M9 7v4"],   // 2026-10-18e
   }[name] || [];
   paths.forEach((d) => {
     const p = document.createElementNS(ns, "path");
@@ -1785,6 +1838,14 @@ function drawCalendar() {
     });
     rb.title = "A fresh one every day from this day";
     row.append(rb);
+    // 2026-10-18e: "theres not delete fiunction". Asks once, then sends.
+    const sure = state.calDelete === dayKey(pick.from, pick.text);
+    const db = button(sure ? "Yes, delete it" : "Delete", sure ? "danger" : "quiet",
+      () => sure ? deleteLine(pick.from, pick.text) : askDelete(pick));
+    db.prepend(icon("bin"));
+    db.title = sure ? "Takes it off this day for good" : "Take it off this day";
+    row.append(db);
+    if (sure) row.append(button("Keep it", "quiet", () => { state.calDelete = null; drawCalendar(); }));
     box.append(row);
     if (state.calRepeat && state.calRepeat.text === pick.text) box.append(repeatForm(pick, parts));
   }
@@ -2768,7 +2829,7 @@ function drawRewards() {
     const line = el("div", "switch-row");
     const words = el("div", "grow");
     words.append(el("p", "switch-name", "Save leftover minutes as points overnight"),
-      el("p", "muted", auto.sending ? "Telling the laptop. About 20 seconds while the tutor is open."
+      el("p", "muted", auto.sending ? "Telling the laptop. A few seconds while the tutor is open."
         : auto.on ? "On. Nothing in the bank is lost at the end of the day."
         : "Off. Only a quarter of the bank is kept each night."));
     const flip = button(auto.on ? "On" : "Off", "switch", () => {
@@ -2789,7 +2850,7 @@ function drawRewards() {
     top.append(el("p", "muted", soon.points + " point" + (soon.points === 1 ? "" : "s") + " drop to a fifth in " +
       soon.left + " day" + (soon.left === 1 ? "" : "s") + "."));
   }
-  if (waiting || moving) top.append(el("p", "muted", "Sending that to the laptop. About 20 seconds while the tutor is open."));
+  if (waiting || moving) top.append(el("p", "muted", "Sending that to the laptop. A few seconds while the tutor is open."));
   if (bank && mins > 0) {
     const save = el("form", "save-points reward-foot");
     const field = el("input");
@@ -3187,6 +3248,7 @@ function start() {
     if (!user) return;
     const base = "users/" + user.uid + "/";
     cloud = { db, base };
+    siteBeat();                           // 2026-10-18e
     const listen = (name, key) => stops.push(onSnapshot(collection(db, base + name), (snap) => {
       state[key] = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       drawAll();
