@@ -1,0 +1,152 @@
+TUTOR WEB APP: HOW TO SET IT UP
+================================
+
+Do these in order. Each step is one click or one thing to type.
+Nothing leaves your laptop until PART 3 is finished.
+
+You need: a Google account, and about 15 minutes.
+
+
+PART 1: MAKE THE FIREBASE PROJECT (the place the data lives)
+------------------------------------------------------------
+1.  Open Chrome. Go to  https://console.firebase.google.com
+2.  Sign in with your Google account if it asks.
+3.  Click the big box that says "Create a project" (or "Add project").
+4.  Type a name:  tutor-anaya   then click "Continue".
+5.  It asks about Google Analytics. Click the switch so it is OFF.
+    Click "Create project". Wait. Click "Continue".
+
+Turn on sign in:
+6.  On the left, click "Build", then click "Authentication".
+7.  Click "Get started".
+8.  Click "Email/Password".
+9.  Click the FIRST switch so it is on. Click "Save".
+10. At the top, click the "Users" tab. Click "Add user".
+11. Type an email (it can be your real one) and a NEW password that you
+    don't use anywhere else. Write the password down. Click "Add user".
+
+Turn on the database:
+12. On the left, click "Build", then click "Firestore Database".
+13. Click "Create database".
+14. Location: pick any, click "Next".
+15. Pick "Start in production mode". Click "Create" (or "Enable").
+16. At the top, click the "Rules" tab.
+17. Delete everything in the box.
+18. Open the file  firestore.rules  (it is in this folder) in Notepad.
+    Select all of it, copy it, and paste it into the box in Chrome.
+19. Click "Publish".
+
+Get the keys:
+20. Top left, click the little cog, then click "Project settings".
+21. Scroll down to "Your apps". Click the icon that looks like  </>
+22. App nickname: type  tutor   Do NOT tick Firebase Hosting.
+    Click "Register app".
+23. You now see a block with apiKey, authDomain, projectId and appId.
+    Leave this page open. You need it for PART 2 and PART 3.
+
+
+PART 2: TELL THE WEB APP ABOUT IT
+---------------------------------
+24. In this folder, right click  firebase-config.js  and open it with
+    Notepad.
+25. Replace each PASTE_..._HERE with the matching value from the page in
+    step 23. Keep the quote marks. Where it says PASTE_PROJECT_ID_HERE
+    twice, put the projectId both times.
+26. Press Ctrl+S to save. Close Notepad.
+
+
+PART 3: TELL THE DESKTOP TUTOR ABOUT IT
+---------------------------------------
+27. Go up one folder, to the folder that has  main.py  in it.
+28. Right click  firebase_config.json  and open it with Notepad.
+29. Put the apiKey between the quotes after "apiKey".
+30. Put the projectId between the quotes after "projectId".
+31. Put the email from step 11 between the quotes after "email".
+32. Put the password from step 11 between the quotes after "password".
+33. Press Ctrl+S to save. Close Notepad.
+34. Right click the cat in the tray (bottom right of the screen) and
+    click "Restart the tutor".
+35. Open the tutor and look at the Activity tab. It should say
+    "Cloud sync is on."
+    If it says "Cloud sync isn't getting through", read the reason it
+    gives. Wrong password and a typo in the apiKey are the usual two.
+36. Once it has said "Cloud sync is on" and a minute has gone by, you can
+    open  firebase_config.json  again and delete the password (leave the
+    two quote marks). The tutor keeps its own pass after the first time.
+
+
+PART 4: PUT THE WEB APP ONLINE
+------------------------------
+The same way the Infinity Bites site went up.
+37. Go to  https://app.netlify.com/drop
+38. Drag this whole folder (tutor-pwa) onto the page. Wait for it to
+    finish. It gives you a web address ending in .netlify.app. Copy it.
+39. Back in the Firebase page: left side, "Build", "Authentication",
+    then the "Settings" tab, then "Authorized domains".
+    Click "Add domain". Paste the netlify address WITHOUT the https://
+    at the front. Click "Add".
+40. Open the netlify address. Sign in with the email and password from
+    step 11. You should see Today, Subjects and YouTube.
+
+On your phone:
+41. Open the same address in Chrome (Android) or Safari (iPhone).
+42. Android: tap the three dots, then "Add to Home screen" or "Install".
+    iPhone: tap the share square, then "Add to Home Screen".
+
+
+PUTTING A NEW VERSION OF THE WEB APP ONLINE
+-------------------------------------------
+Do this every time the files in this folder change.
+1.  Go to  https://app.netlify.com   and sign in.
+2.  Click your tutor site in the list (the one ending .netlify.app).
+3.  At the top, click "Deploys".
+4.  Scroll to the bottom. There is a box that says
+    "Drag and drop your project output folder here".
+5.  Open File Explorer, find the  tutor-pwa  folder, and drag the WHOLE
+    folder onto that box. Wait until it says "Published".
+6.  On the laptop: open the web app and press Ctrl+Shift+R once.
+    On the phone: close the app fully and open it again. If it still
+    looks old, do it a second time.
+Then restart the tutor: right click the cat, click "Restart the tutor".
+
+
+WHAT THE WEB APP DOES NOW
+-------------------------
+Sync now (top of the page)
+    Asks the laptop to send everything now. It says "Synced" with the
+    time when the laptop has answered. If it says the laptop isn't
+    answering, the tutor is closed or the laptop is asleep.
+    On the laptop the same thing is: right click the cat's icon in the
+    tray, click "Sync with the web app now".
+
+The YouTube question
+    After every 20 minutes of YouTube in a day, a box at the top asks if
+    it was worth it. One press answers it. The note is optional.
+    Your answers show on the YouTube tab.
+
+Chats tab
+    1. In Gemini, open the revision chat.
+    2. Click anywhere in the chat, press Ctrl+A, then Ctrl+C.
+    3. In the web app, click "Chats", then "Add a Gemini chat".
+    4. Click in the big box and press Ctrl+V.
+    5. Pick the subject, or leave "Work it out for me".
+    6. Click "Save it".
+
+Papers tab
+    Shows the PDFs, pictures and text files in your REVISION folder on the
+    Desktop, by subject. They come up from the laptop a few at a time, so
+    a big folder takes a while the first day. A file that says "Still
+    coming up from the laptop" isn't ready yet. Files over 15 MB stay on
+    the laptop only.
+    If your REVISION folder is somewhere other than the Desktop: open
+    firebase_config.json next to main.py in Notepad and add this line
+    after the "password" line (put a comma at the end of the password
+    line first), with your own folder, and two backslashes wherever the
+    path has one:
+        "revisionFolder": "C:\\Users\\anaya\\Documents\\REVISION"
+
+
+TO TURN THE CLOUD OFF
+---------------------
+Delete  firebase_config.json  next to main.py (or put PASTE back in the
+apiKey) and restart the tutor. Everything stays on the laptop as before.
