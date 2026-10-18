@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tutor: privacy</title>
+  <link rel="icon" href="icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    main { max-width: 640px; margin: 0 auto; padding: 24px 0 48px; }
+    main h1 { font-size: 1.5rem; margin-bottom: 4px; }
+    main h2 { color: var(--text); font-size: 1.05rem; margin-top: 28px; }
+    main p, main li { line-height: 1.6; }
+    main ul { list-style: disc; padding-left: 22px; }
+    main a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Tutor: privacy</h1>
+    <p class="muted">Last updated 3 October 2026</p>
+
+    <p>Tutor is a personal study app made by one student for her own use. It is not a business, it has no adverts, and nobody else's data is collected. This page says plainly what it touches.</p>
+
+    <h2>Who uses it</h2>
+    <p>One person: the student who built it. There are no other accounts.</p>
+
+    <h2>What it reads from Google</h2>
+    <p>If Google is connected, the app on the student's own laptop reads, and only reads:</p>
+    <ul>
+      <li>Google Calendar: event titles, dates and times, for the next 60 days.</li>
+      <li>Google Classroom: the list of courses, coursework titles, due dates, whether her own work is handed in, and the titles and links of class materials.</li>
+    </ul>
+    <p>In Google Classroom it cannot create, change, hand in or delete anything. It does not read email, files in Drive, or anything about other students or teachers beyond the titles above.</p>
+
+    <h2>What it writes to Google</h2>
+    <p>One thing only, and only when she asks: a date on her own main Google Calendar, such as a test or a homework due date. Before anything is written she is shown the exact title, day and time, and nothing is sent until she says yes. The app marks every event it creates. It can later change or remove those marked events, again only after showing her and getting a yes. It never changes or deletes an event it did not create itself, and it never invites or emails anyone.</p>
+
+    <h2>What it does with that</h2>
+    <p>It shows it back to her: a list of school work and deadlines in this web app and in the desktop app. That is the only use. It is not used for advertising, not sold, not shared with anyone, and not used to train any AI model.</p>
+
+    <h2>Where it is kept</h2>
+    <ul>
+      <li>On her own laptop, in the app's local database.</li>
+      <li>In her own private Google Firebase project, so this web app can show it on her phone. Only her signed in account can read it.</li>
+    </ul>
+    <p>The permission Google gives the app is stored on her laptop only.</p>
+
+    <h2>What else the app stores</h2>
+    <p>Her own to-do list, test dates, timetable, revision notes and files, a log of time spent on YouTube, and her own answers about how she spent her time. All of it is hers, kept in the same two places.</p>
+
+    <h2>Removing it</h2>
+    <p>Choosing "Disconnect Google" in the desktop app deletes the Google permission and everything that was read from Google. Access can also be removed at any time at <a href="https://myaccount.google.com/permissions" rel="noopener">myaccount.google.com/permissions</a>. Deleting the Firebase project removes everything stored online.</p>
+
+    <h2>Google's rules</h2>
+    <p>Tutor's use of information received from Google APIs follows the <a href="https://developers.google.com/terms/api-services-user-data-policy" rel="noopener">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
+
+    <h2>Questions</h2>
+    <p>Ask the student who runs this site. Her contact email is the support email shown on Google's permission screen for Tutor.</p>
+
+    <p><a href="index.html">Back to Tutor</a></p>
+  </main>
+</body>
+</html>
