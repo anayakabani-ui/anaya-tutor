@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#F4F6F9" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121A21" media="(prefers-color-scheme: dark)">
+  <title>Tutor</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <!-- Google Sans Flex, the same face as the desktop tutor. With no signal the
+       page falls back to the system font and still works. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:wght@400;500;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="signin" class="card" hidden>
+    <h1>Tutor</h1>
+    <p class="muted">Sign in with the email and password you made for the tutor in Firebase.</p>
+    <form id="signin-form">
+      <label>Email <input id="email" type="email" autocomplete="username" required></label>
+      <label>Password <input id="password" type="password" autocomplete="current-password" required></label>
+      <button type="submit">Sign in</button>
+      <p id="signin-error" class="error" role="alert"></p>
+    </form>
+  </main>
+
+  <main id="setup" class="card" hidden>
+    <h1>Not set up yet</h1>
+    <p>Open <code>firebase-config.js</code> and paste in the values from the Firebase console. The steps are in <code>HOW TO SET UP.txt</code>.</p>
+  </main>
+
+  <div id="app" hidden>
+    <!-- 2026-10-07c: five pages along the top (TOP_TABS), the rest down the
+         side in groups (TAB_GROUPS), with sync and sign out at its foot.
+         Menu hides and shows the side; on a narrow screen it's a drawer.
+         app.js fills both lists. -->
+    <aside id="side" aria-label="Pages">
+      <div class="side-top">
+        <p class="side-name">Tutor</p>
+        <button id="side-close" class="quiet" type="button">Close</button>
+      </div>
+      <nav id="tabs" role="tablist" aria-orientation="vertical"></nav>
+      <div class="side-foot">
+        <p id="status" class="muted">Loading</p>
+        <p id="site-version" class="muted site-version"></p>
+        <button id="sync" class="quiet" type="button">Sync now</button>
+        <button id="signout" class="quiet" type="button">Sign out</button>
+        <p id="sync-status" class="muted" role="status"></p>
+      </div>
+    </aside>
+    <div id="side-shade" hidden></div>
+
+    <div id="main">
+      <header>
+        <button id="side-open" class="quiet" type="button" aria-controls="side" aria-expanded="true">Menu</button>
+        <nav id="top-tabs" role="tablist" aria-label="Main pages"></nav>
+      </header>
+      <h1 id="page-name" hidden></h1>
+
+      <section id="reflect" class="ask" hidden aria-live="polite">
+        <p id="reflect-words"></p>
+        <ul id="reflect-seen" class="reflect-seen"></ul>
+        <ul id="reflect-videos" class="reflect-videos"></ul>
+        <label class="plain" for="reflect-note">What you did</label>
+        <input id="reflect-note" type="text" maxlength="300" autocomplete="off">
+        <p id="reflect-error" class="error" role="alert"></p>
+        <p class="muted">And honestly, was it:</p>
+        <div class="choices">
+          <button type="button" data-answer="worth">Useful</button>
+          <button type="button" data-answer="okay" class="soft">Mixed</button>
+          <button type="button" data-answer="not" class="soft">Wasted</button>
+        </div>
+      </section>
+
+      <section id="timer" class="timer" hidden role="timer" aria-live="off">
+        <p id="timer-words"></p>
+        <div class="choices">
+          <button id="timer-pause" type="button" class="soft">Pause</button>
+          <button id="timer-stop" type="button" class="soft">Stop</button>
+        </div>
+      </section>
+
+      <!-- 2026-10-11h: a proper exam. Black over the whole page, the paper and its clock. -->
+      <section id="exam" class="exam" hidden role="timer" aria-live="off">
+        <p id="exam-title" class="exam-title"></p>
+        <p id="exam-clock" class="exam-clock"></p>
+        <p id="exam-note" class="exam-note"></p>
+        <div class="exam-choices">
+          <button id="exam-done" type="button">I've finished</button>
+          <button id="exam-stop" type="button">Stop the exam</button>
+        </div>
+      </section>
+
+      <section id="tab-today" role="tabpanel"></section>
+      <section id="tab-talk" role="tabpanel" hidden></section>
+      <section id="tab-tasks" role="tabpanel" hidden></section>
+      <section id="tab-calendar" role="tabpanel" hidden></section>
+      <section id="tab-notes" role="tabpanel" hidden></section>
+      <section id="tab-rewards" role="tabpanel" hidden></section>
+      <section id="tab-school" role="tabpanel" hidden></section>
+      <section id="tab-lessons" role="tabpanel" hidden></section>
+      <section id="tab-subjects" role="tabpanel" hidden></section>
+      <section id="tab-youtube" role="tabpanel" hidden></section>
+      <section id="tab-chats" role="tabpanel" hidden></section>
+      <section id="tab-papers" role="tabpanel" hidden></section>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
