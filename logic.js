@@ -1444,7 +1444,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v47";
+export const APP_VERSION = "v48";
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -1636,6 +1636,30 @@ export function calendarTitle(days, view, anchor) {
 }
 
 // Why a line can't go from one day to another. "" when it can.
+// 2026-10-18f: "click add method works just takes AGES and doesnt even
+// have anything to show that it was responsive". A "Do 1 from" card put on
+// a day shows there at once, faded, till the laptop's copy has one more of
+// it than the day had (or two minutes go by). A copy's "(2)" is ignored.
+const copyBase = (text) => String(text || "").trim().replace(/\s\(\d+\)$/, "").toLowerCase();
+export function pickCount(found, day, text) {
+  const d = ((found && found.days) || []).find((x) => x.day === day);
+  return d ? d.lines.filter((l) => copyBase(l.text) === copyBase(text)).length : 0;
+}
+export function settlePicks(picks, found, nowMs) {
+  return (picks || []).filter((p) => nowMs - p.atMs <= 120000 && pickCount(found, p.to, p.text) <= p.had);
+}
+export function withPicks(found, picks) {
+  if (!found || !(picks || []).length) return found;
+  const days = found.days.map((d) => ({ ...d, lines: d.lines.slice() }));
+  picks.forEach((p) => {
+    let d = days.find((x) => x.day === p.to);
+    if (!d) { d = { day: p.to, lines: [] }; days.push(d); }
+    d.lines.push({ text: p.text, done: false, optional: false, fun: false, bold: false });
+  });
+  days.sort((a, b) => a.day.localeCompare(b.day));
+  return { ...found, days };
+}
+
 export function moveProblem(text, from, to, today) {
   const now = isoDay(today);
   if (!String(text || "").trim()) return "Nothing to move.";
