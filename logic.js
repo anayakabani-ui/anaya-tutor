@@ -1325,8 +1325,19 @@ export function allDays(live) {
                    // 2026-10-16m: the list (subject) it's in, and what it's worth.
                    list: String(l.list || "").trim(), minutes: Number(l.minutes) || 0,
                    // 2026-10-16n: her Subjects box lines come with their little heading.
-                   group: String(l.group || "").trim(), subjects: l.from === "subjects" }))
+                   group: String(l.group || "").trim(), subjects: l.from === "subjects",
+                   // 2026-10-18: a Subjects line already put on a day (for the plan check).
+                   planned: /^\d{4}-\d{2}-\d{2}$/.test(String(l.planned || "")) ? String(l.planned) : "" }))
     .filter((l) => l.text.trim());
+  // 2026-10-18: "how many i want to finish by what date", per list.
+  const goals = {};
+  if (held.goals && typeof held.goals === "object") {
+    Object.keys(held.goals).forEach((name) => {
+      const g = held.goals[name] || {};
+      const count = Math.max(0, Math.round(Number(g.count) || 0));
+      if (count && /^\d{4}-\d{2}-\d{2}$/.test(String(g.by || ""))) goals[name] = { count, by: String(g.by) };
+    });
+  }
   // 2026-10-16: rough times on lines ("day|words": "HH:MM") and events.
   const times = {};
   if (held.times && typeof held.times === "object") {
@@ -1339,18 +1350,23 @@ export function allDays(live) {
     /^\d{4}-\d{2}-\d{2}$/.test(String(e.day || "")) && String(e.title || "").trim())
     .map((e) => ({ id: String(e.id || ""), day: String(e.day), title: String(e.title),
                    start: /^\d{2}:\d{2}$/.test(String(e.start || "")) ? String(e.start) : "",
-                   end: /^\d{2}:\d{2}$/.test(String(e.end || "")) ? String(e.end) : "" }));
+                   end: /^\d{2}:\d{2}$/.test(String(e.end || "")) ? String(e.end) : "",
+                   quiet: Boolean(e.quiet) }));   // 2026-10-18: keeps the laptop quiet
   // 2026-10-16b: lines that come back every day, shown ahead of time.
   const repeats = (Array.isArray(held.repeats) ? held.repeats : []).filter((r) => r && String(r.text || "").trim())
     .map((r) => ({ text: String(r.text).trim(), from: String(r.from || "").slice(0, 10),
                    until: String(r.until || "").slice(0, 10),
+                   // 2026-10-18: every [x] hours/days/weeks.
+                   every: Math.max(1, Math.min(60, Number(r.every) || 1)),
+                   unit: ["hour", "day", "week"].includes(String(r.unit || "")) ? String(r.unit) : "day",
                    // 2026-10-17: "3 crochet bracelets" repeating as three lines a day.
                    times: Math.max(1, Math.min(20, Number(r.times) || 1)) }));
   // 2026-10-16e: lines she locked to their day ("day|words"). A swap
   // leaves them where they are.
   const locks = new Set((Array.isArray(held.locks) ? held.locks : []).map(String)
     .filter((k) => /^\d{4}-\d{2}-\d{2}\|/.test(k)));
-  return { today: String(held.today || ""), days, bank, times, events, repeats, locks };
+  return { today: String(held.today || ""), days, bank: bank.filter((l) => !l.planned),
+           planned: bank.filter((l) => l.planned), goals, times, events, repeats, locks };
 }
 
 // ---- 2026-10-16: the times view. "HEAVILY reference google calender's
@@ -1427,7 +1443,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v42";
+export const APP_VERSION = "v43";
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -1694,9 +1710,63 @@ export function settleSwaps(swaps, found, nowMs) {
     swapSig(found, sw.one) === sw.before.one && swapSig(found, sw.two) === sw.before.two);
 }
 
+export function repeatOnDay(r, day) {
+  const every = Math.max(1, Number(r.every) || 1);
+  const unit = r.unit || "day";
+  if (unit === "hour" || (unit === "day" && every === 1) || !r.from) return true;
+  const gap = Math.round((atNoon(day) - atNoon(r.from)) / 86400000);
+  return gap >= 0 && gap % (every * (unit === "week" ? 7 : 1)) === 0;
+}
+export function repeatWords(r) {
+  const every = Math.max(1, Number(r.every) || 1);
+  const unit = r.unit || "day";
+  return every === 1 ? "every " + unit : "every " + every + " " + unit + "s";
+}
 export function repeatsOn(found, day) {
   return ((found && found.repeats) || []).filter((r) => (!r.from || r.from <= day) && (!r.until || day <= r.until))
-    .flatMap((r) => Array(Math.max(1, Number(r.times) || 1)).fill(r.text));
+    .filter((r) => repeatOnDay(r, day))
+    .flatMap((r) => (r.unit === "hour" ? [r.text + " (" + repeatWords(r) + ")"]
+                                       : Array(Math.max(1, Number(r.times) || 1)).fill(r.text)));
+}
+
+// 2026-10-18: "a total estimated task completition at the bottom; so, say
+// if i have [x] tasks in english- i can choose how many i want to finish by
+// what date. then itll say with the current plan setup ... u will have [x]
+// tasks leftover from whatever lists". For each list with a goal: how many
+// of its tasks are on days up to that date (its own lines put on a day, and
+// each "do 1 from [LIST]" on a day), and how many short that leaves.
+export function planCheck(found, today) {
+  const now = isoDay(today);
+  const tabs = bankTabs((found && found.bank) || []);
+  const planned = (found && found.planned) || [];
+  const goals = (found && found.goals) || {};
+  const names = [];
+  tabs.forEach((t) => names.push(t.name));
+  planned.forEach((l) => { const n = l.list || BANK_OTHER; if (!names.includes(n)) names.push(n); });
+  Object.keys(goals).forEach((n) => { if (!names.includes(n)) names.push(n); });
+  const rows = names.map((name) => {
+    const tab = tabs.find((t) => t.name === name);
+    const inBank = tab ? tab.lines.filter((l) => !String(l.text).trim().startsWith(">")).length : 0;
+    const mine = planned.filter((l) => (l.list || BANK_OTHER) === name);
+    const goal = goals[name] || null;
+    const by = goal ? goal.by : "";
+    const pick = new RegExp("^do 1 from \\[" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\]", "i");
+    const cards = ((found && found.days) || []).filter((d) => d.day >= now && (!by || d.day <= by))
+      .reduce((n, d) => n + d.lines.filter((l) => !l.done && pick.test(String(l.text).trim())).length, 0);
+    const onDays = mine.filter((l) => l.planned >= now && (!by || l.planned <= by)).length + cards;
+    const open = inBank + mine.length;
+    const want = goal ? Math.min(goal.count, open) : 0;
+    return { name, open, inBank, planned: onDays, goal, want, short: goal ? Math.max(0, want - onDays) : 0,
+             late: goal && goal.by < now };
+  });
+  const short = rows.filter((r) => r.short > 0);
+  const total = short.reduce((n, r) => n + r.short, 0);
+  const anyGoal = rows.some((r) => r.goal);
+  return { rows, total,
+           words: !anyGoal ? "Set how many you want to finish from a list, and by when."
+             : total ? "With the plan as it is, you'll have " + total + " left over: " +
+                       short.map((r) => r.name + " " + r.short).join(", ") + "."
+             : "With the plan as it is, every goal's covered." };
 }
 
 // 2026-10-17: "i want eg 3 crochet bracelets and it should have the option
