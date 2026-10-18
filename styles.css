@@ -649,9 +649,29 @@ button.plan-swap:hover { background: none; box-shadow: none; }
 .quiet-box input { width: auto !important; margin: 0 !important; }
 .plan-mark.event[draggable=true] { cursor: grab; }
 /* 2026-10-18: the plan check folds. */
-.plan-check-top { display: flex; align-items: center; gap: 6px; }
+.plan-check-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .plan-check-top .plan-head { margin: 0; }
-.plan-check-fold { background: transparent !important; box-shadow: none !important; color: var(--muted) !important; padding: 6px !important; width: auto !important; margin: 0 !important; border-radius: 8px; }
+/* 2026-10-18b: a plain labelled button, not a faint arrow. */
+.plan-check-fold { background: var(--card) !important; color: var(--accent) !important; border: 1px solid var(--line) !important; box-shadow: none !important; padding: 5px 12px !important; width: auto !important; margin: 0 !important; border-radius: 999px; font-weight: 600; font-size: 13px; }
 .plan-check-fold:hover { background: var(--hover) !important; }
+.plan-check-all { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 0 12px; margin-bottom: 4px; border-bottom: 1px dashed var(--line); }
+.plan-check-all input { width: auto !important; margin: 0 !important; font: inherit; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--line); }
+.plan-check-all input[type=number] { width: 84px !important; }
+.plan-check-all-go { width: auto !important; margin: 0 !important; padding: 6px 12px !important; border-radius: 999px; font-weight: 600; }
+/* 2026-10-18b: subject colours (the bank's lists, and their lines wherever they show). */
+.plan-line.subj, .bank-pick-line.subj { border-left: 4px solid var(--subj); padding-left: 10px; }
+.bank-sub.subj { border-top: 4px solid var(--subj); }
+.bank-sub.subj .bank-sub-name { color: var(--subj); font-weight: 700; }
+.bank-group-head.subj { color: var(--subj); }
+.tg-item.event.coloured, .plan-mark.event.coloured {
+  background: color-mix(in srgb, var(--ev) 26%, var(--card)); border-left: 4px solid var(--ev);
+}
+.tg-item.subj:not(.event) { border-left: 4px solid var(--subj); }
+/* 2026-10-18b: event colour swatches. */
+.colour-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.colour-dot { width: 20px; height: 20px; min-width: 20px; padding: 0 !important; border-radius: 50% !important; background: var(--dot) !important; border: 2px solid var(--card) !important; box-shadow: none !important; margin: 0 !important; width: 20px !important; }
+.colour-dot.none { background: var(--card) !important; border: 1px dashed var(--muted) !important; width: auto !important; border-radius: 999px !important; padding: 0 8px !important; font-size: 11px; color: var(--muted); }
+.colour-dot.none::after { content: "none"; }
+.colour-dot.on { outline: 2px solid currentColor; outline-offset: 2px; }
 .plan-check.shut { padding-bottom: 10px; }
 .plan-check.shut .plan-check-says { margin-bottom: 0; }
