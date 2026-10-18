@@ -31,7 +31,7 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          TAB_GROUPS, TOP_TABS, tabName, tabOnTop, startTab, tabStep, lessonReal, autoPoints, overnightWords,
          rewardUse, rewardPiles,
          allDays, dayKey, dayLines, dayHead, allDaysCount, settleDays,
-         CAL_VIEWS, CAL_FEW, addMove, BANK, BANK_PICK, PICK_LEASTS, bankTabs, pickLine, withMoves, calendarDays,
+         CAL_VIEWS, CAL_FEW, addMove, BANK, BANK_PICK, pickCount, settlePicks, withPicks, PICK_LEASTS, bankTabs, pickLine, withMoves, calendarDays,
          HOUR_PX, CAL_LAYOUTS, clockWords, minutesOf, hhmm, dropTime, mergedTimes, timeColumn, firstScroll, scrollFloor, CAL_LOCK_HOUR, settleSwaps, swapSig, calendarStep, calendarTitle, calendarCells,
          moveProblem, settleMoves, notesIncoming, noteVersion,
          splitLine, parseChat, chatWaiting, APP_VERSION, nowScroll, eventAfterDrag,
@@ -114,7 +114,7 @@ const state = { tasks: [], exams: [], timetable: [], visits: [], day: null, meta
                 dragging: false, calStale: false, calDrag: null,
                 notes: null,           // live/notes off the laptop
                 // 2026-10-17: the bank's folds, the repeat form, the chat.
-                bankShut: new Set(), bankGroupsOpen: new Set(), calRepeat: null, calDelete: null, delWaiting: new Map(), calMulti: [], calMultiRepeat: false, calHidePast: false,
+                bankShut: new Set(), bankGroupsOpen: new Set(), calRepeat: null, calDelete: null, delWaiting: new Map(), picksWaiting: [], calMulti: [], calMultiRepeat: false, calHidePast: false,
                 chat: [], chatSeen: false, chatWaiting: [],
                 // 2026-10-17b: events changed here, waiting for the laptop
                 // (id -> {day, title, start, end, atMs}); the one being
@@ -647,6 +647,7 @@ function sendTime(day, text, at) {
 }
 
 function placeAt(held, day, at) {
+  if (held.from === BANK_PICK) return pickToDay(held, day, at);     // 2026-10-18f
   if (held.from === day) return sendTime(day, held.text, at);
   return Promise.resolve(moveLine(held, day)).then((moved) => {
     if (moved) return sendTime(day, held.text, at);
@@ -1010,7 +1011,9 @@ function timesDrop(target, day, onHours) {
   target.addEventListener("dragover", (event) => {
     if (!state.calDrag) return;
     event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
+    // 2026-10-18f: a "Do 1 from" card is a copy. A "move" here made the
+    // browser refuse the drop, so dragging one did nothing at all.
+    event.dataTransfer.dropEffect = state.calDrag.from === BANK_PICK ? "copy" : "move";
     target.classList.add("over");
   });
   target.addEventListener("dragleave", (event) => {
@@ -1046,6 +1049,7 @@ function timedBlock(item, day, past) {
   // 2026-10-18b: an event she coloured keeps its colour; a subject line its subject's.
   if (isEvent && eventColour(item.event.color)) { block.classList.add("coloured"); block.style.setProperty("--ev", item.event.color); }
   if (!isEvent && item.line) applySubject(block, item.line);
+  if (!isEvent && item.line && ghostPick(day, item.line.raw)) block.classList.add("moving");   // 2026-10-18f
   block.style.top = top + "px";
   block.style.height = tall + "px";
   block.style.left = "calc(" + (item.lane * width) + "% + 2px)";
@@ -1174,21 +1178,32 @@ function drawTimes(box, days, found, now, pick) {
 
 // 2026-10-16m: the "Do 1 from [LIST]" card dropped on a day. The line
 // goes on that day; the laptop puts it there in a few seconds.
-function pickToDay(pick, to) {
+function pickToDay(pick, to, at) {
   const now = new Date();
   state.calPick = null;
   if (to === BANK || to === BANK_PICK) return Promise.resolve(false);
   const problem = moveProblem(pick.text, BANK_PICK, to, now);
   if (problem) { state.calSaid = problem; drawCalendar(); return Promise.resolve(false); }
-  state.calSaid = "\u201c" + pick.text + "\u201d goes on " + dayHead(to, now) +
-    ". The laptop takes it in a few seconds while the tutor is open.";
+  // 2026-10-18f: it shows on the day (and at its hour) straight away.
+  const ghost = { text: pick.text, to, had: pickCount(allDays(state.alldays), to, pick.text), atMs: Date.now() };
+  state.picksWaiting = state.picksWaiting.concat([ghost]);
+  if (at) {
+    state.timesWaiting = state.timesWaiting.filter((t) => Date.now() - t.atMs < 120000 && t.key !== to + "|" + pick.text);
+    state.timesWaiting.push({ key: to + "|" + pick.text, at, atMs: Date.now() });
+  }
+  state.calSaid = "\u201c" + pick.text + "\u201d is on " + dayHead(to, now) + (at ? " at about " + clockWords(at) : "") +
+    ". It's faded till the laptop has it (a few seconds while the tutor is open).";
   drawCalendar();
-  return sendEdit({ kind: "bank_pick", text: pick.text, from: BANK, to }).then((sent) => {
+  return sendEdit({ kind: "bank_pick", text: pick.text, from: BANK, to, time: at || "" }).then((sent) => {
     if (sent) return true;
+    state.picksWaiting = state.picksWaiting.filter((p) => p !== ghost);
     state.calSaid = "Couldn't send that. Are you online?";
     drawCalendar();
     return false;
   });
+}
+function ghostPick(day, raw) {
+  return state.picksWaiting.some((p) => p.to === day && p.text === raw);
 }
 
 function drawBank(box, found, pick) {
@@ -1312,7 +1327,7 @@ function calLine(line, dayId, past, pick) {
   const picked = pick && pick.text === line.raw && pick.from === dayId;
   const item = el(can ? "button" : "p", "plan-line" + (head ? " head" : "") + (line.done ? " done" : "") +
     (line.sub ? " sub" : "") + (line.optional ? " optional" : "") + (line.fun ? " fun" : "") +
-    (line.bold ? " bold" : "") + (line.moving ? " moving" : "") + (picked ? " picked" : "") +
+    (line.bold ? " bold" : "") + (line.moving || ghostPick(dayId, line.raw) ? " moving" : "") + (picked ? " picked" : "") +
     (line.repeat ? " repeat" : "") + (line.locked ? " locked" : ""),
     (line.sub ? "> " : "") + line.text);
   if (line.locked) item.prepend(icon("lock"));
@@ -1360,7 +1375,7 @@ function calDrop(target, dayId, pick) {
     if (state.calDrag.from === BANK_PICK && dayId === BANK) return;   // 2026-10-16m
     if (state.calDrag.event && dayId === BANK) return;                 // 2026-10-18
     event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
+    event.dataTransfer.dropEffect = state.calDrag.from === BANK_PICK ? "copy" : "move";   // 2026-10-18f
     target.classList.add("over");
   });
   target.addEventListener("dragleave", (event) => {
@@ -1718,7 +1733,9 @@ function drawCalendar() {
   const box = $("tab-calendar");
   box.replaceChildren();
   const now = new Date();
-  const found = allDays(state.alldays);
+  const loaded = allDays(state.alldays);
+  state.picksWaiting = settlePicks(state.picksWaiting, loaded, Date.now());   // 2026-10-18f
+  const found = withPicks(loaded, state.picksWaiting);
   if (!found) {
     box.append(el("p", "empty", "The days show here once the laptop has sent them. Open the tutor and press Sync now."));
     return;
@@ -3206,7 +3223,7 @@ function start() {
   setInterval(() => { if (state.chatWaiting.length) drawTalk(); }, 10000);   // 2026-10-17
   // 2026-10-10q: "Sent" on the notes gives way once the laptop has answered
   // or stopped answering, and a drag that never arrived goes back.
-  setInterval(() => { drawNotes(); if (state.moves.length) drawCalendarSoft(); }, 15000);
+  setInterval(() => { drawNotes(); if (state.moves.length || state.picksWaiting.length) drawCalendarSoft(); }, 15000);
   state.calView = recall("tutor-cal", "three");
   state.calLayout = recall("tutor-cal-layout", "times");
   state.calFew = Number(recall("tutor-cal-few", "0")) || 0;
