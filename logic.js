@@ -1351,7 +1351,8 @@ export function allDays(live) {
     .map((e) => ({ id: String(e.id || ""), day: String(e.day), title: String(e.title),
                    start: /^\d{2}:\d{2}$/.test(String(e.start || "")) ? String(e.start) : "",
                    end: /^\d{2}:\d{2}$/.test(String(e.end || "")) ? String(e.end) : "",
-                   quiet: Boolean(e.quiet) }));   // 2026-10-18: keeps the laptop quiet
+                   quiet: Boolean(e.quiet),       // 2026-10-18: keeps the laptop quiet
+                   color: eventColour(e.color) }));   // 2026-10-18b: her colour, or ""
   // 2026-10-16b: lines that come back every day, shown ahead of time.
   const repeats = (Array.isArray(held.repeats) ? held.repeats : []).filter((r) => r && String(r.text || "").trim())
     .map((r) => ({ text: String(r.text).trim(), from: String(r.from || "").slice(0, 10),
@@ -1443,7 +1444,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v44";
+export const APP_VERSION = "v45";
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -1513,6 +1514,26 @@ export function bankTabs(lines) {
 export function pickLine(name, least) {
   const n = Number(least) || 0;
   return "do 1 from [" + String(name || "").toUpperCase() + "]" + (n ? " (" + n + "+ min)" : "");
+}
+
+// 2026-10-18b: "make things subjects colour coded". The same colours as the
+// desktop Subjects box (main.py SUBJECT_COLOURS). Keyed by the list name the
+// bank uses ("DT" is design technology).
+export const SUBJECT_HEX = {
+  biology: "#E86AA6", business: "#9AA6AE", chemistry: "#3E9A4A", dt: "#B5302A",
+  english: "#7CC76A", french: "#2FA59B", geography: "#9B6BD6", maths: "#4C8DF6",
+  physics: "#EE6E66",
+};
+export function subjectColour(name) {
+  const key = String(name || "").trim().toLowerCase();
+  return SUBJECT_HEX[key] || SUBJECT_HEX[key === "design technology" ? "dt" : ""] || "";
+}
+
+// 2026-10-18b: event colours she can choose. "" is the default look.
+export const EVENT_COLOURS = ["#4C8DF6", "#3E9A4A", "#E86AA6", "#9B6BD6", "#EE6E66", "#F2A93B", "#14B8A6", "#9AA6AE"];
+export function eventColour(value) {
+  const v = String(value || "");
+  return /^#[0-9A-Fa-f]{6}$/.test(v) ? v.toUpperCase() : "";
 }
 
 export const dayKey = (day, text) => day + "|" + String(text || "").trim();
