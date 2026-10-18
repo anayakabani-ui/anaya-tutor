@@ -659,14 +659,14 @@ button.plan-swap:hover { background: none; box-shadow: none; }
 .plan-check-all input[type=number] { width: 84px !important; }
 .plan-check-all-go { width: auto !important; margin: 0 !important; padding: 6px 12px !important; border-radius: 999px; font-weight: 600; }
 /* 2026-10-18b: subject colours (the bank's lists, and their lines wherever they show). */
-.plan-line.subj, .bank-pick-line.subj { border-left: 4px solid var(--subj); padding-left: 10px; }
+.plan-line.subj, .bank-pick-line.subj { border-left: 5px solid var(--subj); padding-left: 10px; background: color-mix(in srgb, var(--subj) 20%, var(--card)); }
 .bank-sub.subj { border-top: 4px solid var(--subj); }
 .bank-sub.subj .bank-sub-name { color: var(--subj); font-weight: 700; }
 .bank-group-head.subj { color: var(--subj); }
 .tg-item.event.coloured, .plan-mark.event.coloured {
   background: color-mix(in srgb, var(--ev) 26%, var(--card)); border-left: 4px solid var(--ev);
 }
-.tg-item.subj:not(.event) { border-left: 4px solid var(--subj); }
+.tg-item.subj:not(.event) { border-left: 5px solid var(--subj); background: color-mix(in srgb, var(--subj) 26%, var(--card)); }
 /* 2026-10-18b: event colour swatches. */
 .colour-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .colour-dot { width: 20px; height: 20px; min-width: 20px; padding: 0 !important; border-radius: 50% !important; background: var(--dot) !important; border: 2px solid var(--card) !important; box-shadow: none !important; margin: 0 !important; width: 20px !important; }
@@ -675,3 +675,8 @@ button.plan-swap:hover { background: none; box-shadow: none; }
 .colour-dot.on { outline: 2px solid currentColor; outline-offset: 2px; }
 .plan-check.shut { padding-bottom: 10px; }
 .plan-check.shut .plan-check-says { margin-bottom: 0; }
+
+/* 2026-10-18c: shift-click several tasks, and the bar that acts on them. */
+.plan-line.multi { outline: 2px dashed var(--accent); outline-offset: 1px; }
+.multi-wrap { display: flex; flex-direction: column; gap: 8px; }
+.multi-bar { flex-wrap: wrap; }
