@@ -1444,7 +1444,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v46";
+export const APP_VERSION = "v47";
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -1898,7 +1898,7 @@ export function notesIncoming(box, snap, nowMs) {
   if (sent) {
     if (theirs === sent.text) sent = null;                       // the laptop has it
     else if (version === sent.base && nowMs - sent.atMs < 90000) {
-      return { ...keep, words: "Sent. The laptop takes it in about 20 seconds while the tutor is open." };
+      return { ...keep, words: "Sent. The laptop takes it in a few seconds while the tutor is open." };
     } else sent = null;                                          // changed there, or it never answered
   }
   if (theirs === box.text) return { set: false, text: theirs, base: version, sent, words: "Saved on the laptop." };
