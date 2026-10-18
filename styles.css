@@ -683,3 +683,5 @@ button.plan-swap:hover { background: none; box-shadow: none; }
 
 /* 2026-10-18e: a task being deleted, till the laptop takes it off */
 .plan-line.deleting { opacity: .5; text-decoration: line-through; pointer-events: none; }
+/* 2026-10-18f: a Do 1 from card just dropped on an hour, till the laptop has it */
+.tg-item.moving:not(.event) { opacity: .55; font-style: italic; }
