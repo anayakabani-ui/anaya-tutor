@@ -1303,9 +1303,18 @@ function drawPlanCheck(box, found) {
     if (g.count) goals[name] = { count: g.count, by: g.by }; else delete goals[name];
   });
   const check = planCheck({ ...found, goals }, now);
-  const card = el("section", "plan-check");
-  card.append(el("p", "plan-head", "Plan check"),
-    el("p", "plan-check-says" + (check.total ? " short" : ""), check.words));
+  // 2026-10-18: "PLAN CHECK should have a hide button". Hidden, it's one
+  // line: its name and what it says.
+  const shut = Boolean(recall("tutor-plan-shut", false));
+  const card = el("section", "plan-check" + (shut ? " shut" : ""));
+  const head = el("div", "plan-check-top");
+  const fold = button("", "plan-check-fold", () => { keep("tutor-plan-shut", !shut); drawCalendar(); });
+  fold.append(el("span", "fold-arrow" + (shut ? "" : " open"), ""));
+  fold.title = shut ? "Show the plan check" : "Hide the plan check";
+  fold.setAttribute("aria-expanded", String(!shut));
+  head.append(fold, el("p", "plan-head", "Plan check"));
+  card.append(head, el("p", "plan-check-says" + (check.total ? " short" : ""), check.words));
+  if (shut) { box.append(card); return; }
   const table = el("div", "plan-check-rows");
   check.rows.forEach((row) => {
     const line = el("div", "plan-check-row" + (row.short ? " short" : ""));
@@ -1478,6 +1487,27 @@ function iconButton(name, tip, onClick, pressed) {
   if (pressed !== undefined) b.setAttribute("aria-pressed", String(Boolean(pressed)));
   return b;
 }
+
+// 2026-10-18: "when adding a new event, i type the name in and then it
+// DELETES ALL OF IT". The laptop's updates redrew the whole calendar (and
+// the half-typed form with it) every 20 seconds or so. An update that
+// comes while she's typing in the calendar waits until she's done.
+function typingInCalendar() {
+  const active = document.activeElement;
+  return Boolean(active && $("tab-calendar").contains(active) &&
+    /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName));
+}
+
+function drawCalendarSoft() {
+  if (typingInCalendar()) { state.calStale = true; return; }
+  drawCalendar();
+}
+
+document.addEventListener("focusout", () => {
+  setTimeout(() => {
+    if (state.calStale && !state.dragging && !typingInCalendar()) { state.calStale = false; drawCalendar(); }
+  }, 300);
+});
 
 function drawCalendar() {
   // Never redrawn in the middle of a drag: the line she's holding would go.
@@ -2722,7 +2752,7 @@ function drawAll() {
   drawLessons();
   drawToday(); drawSubjects(); drawSchool();
   drawTasks();                          // the text box itself is never rebuilt
-  drawCalendar(); drawNotes();          // 2026-10-10q
+  drawCalendarSoft(); drawNotes();      // 2026-10-10q; 2026-10-18 soft
   drawTalk();                           // 2026-10-17
   drawYoutube(); drawReflect(); drawSync();
   // The form and an open paper are left alone while she's using them.
@@ -2748,6 +2778,9 @@ function drawTalk() {
     card.append(el("p", "muted talk-note", "This goes to the tutor on your laptop. The cats answer while it's on."));
     const list = el("div", "talk-list");
     list.id = "talk-list";
+    list.addEventListener("scroll", () => {
+      state.chatScrolled = list.scrollHeight - list.scrollTop - list.clientHeight > 40;
+    });
     list.setAttribute("aria-live", "polite");
     const form = el("form", "talk-form");
     const input = document.createElement("textarea");
@@ -2799,7 +2832,22 @@ function drawTalk() {
         ? "Not picked up yet. Is your laptop on, with the tutor open?" : "Sending to your laptop..."));
     list.append(row);
   });
-  if (atBottom || state.chatWaiting.length) list.scrollTop = list.scrollHeight;
+  // 2026-10-18: "it shuld auto scroll to the BOTTOM". New messages, or
+  // the page just opened: to the bottom. Only left where it is if she's
+  // scrolled up to read and nothing new has come.
+  const count = state.chat.length + state.chatWaiting.length;
+  const fresh = count !== state.chatCount;
+  state.chatCount = count;
+  if (atBottom || fresh || state.chatWaiting.length || !state.chatScrolled) {
+    requestAnimationFrame(() => { list.scrollTop = list.scrollHeight; });
+  }
+}
+
+function talkToBottom() {
+  const list = $("talk-list");
+  if (!list) return;
+  state.chatScrolled = false;
+  requestAnimationFrame(() => { list.scrollTop = list.scrollHeight; });
 }
 
 // ------------------------------------------------------------- the sidebar
@@ -2813,6 +2861,7 @@ function selectTab(key, focus) {
   const name = tabName(key);
   if (!name) return;
   state.tab = key;
+  if (key === "talk") setTimeout(talkToBottom, 0);     // 2026-10-18
   document.querySelectorAll(TAB_BUTTONS).forEach((other) => {
     const on = other.dataset.tab === key;
     other.setAttribute("aria-selected", String(on));
@@ -2926,7 +2975,7 @@ function start() {
   setInterval(() => { if (state.chatWaiting.length) drawTalk(); }, 10000);   // 2026-10-17
   // 2026-10-10q: "Sent" on the notes gives way once the laptop has answered
   // or stopped answering, and a drag that never arrived goes back.
-  setInterval(() => { drawNotes(); if (state.moves.length) drawCalendar(); }, 15000);
+  setInterval(() => { drawNotes(); if (state.moves.length) drawCalendarSoft(); }, 15000);
   state.calView = recall("tutor-cal", "three");
   state.calLayout = recall("tutor-cal-layout", "times");
   state.calFew = Number(recall("tutor-cal-few", "0")) || 0;
@@ -3021,7 +3070,7 @@ function start() {
     // 2026-10-10q: every day's list, and her notes.
     stops.push(onSnapshot(doc(db, base + "live/alldays"), (snap) => {
       state.alldays = snap.exists() ? snap.data() : null;
-      drawTasks(); drawCalendar();
+      drawTasks(); drawCalendarSoft();
     }));
     stops.push(onSnapshot(doc(db, base + "live/notes"), (snap) => {
       state.notes = snap.exists() ? snap.data() : null;
