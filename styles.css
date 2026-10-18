@@ -680,3 +680,6 @@ button.plan-swap:hover { background: none; box-shadow: none; }
 .plan-line.multi { outline: 2px dashed var(--accent); outline-offset: 1px; }
 .multi-wrap { display: flex; flex-direction: column; gap: 8px; }
 .multi-bar { flex-wrap: wrap; }
+
+/* 2026-10-18e: a task being deleted, till the laptop takes it off */
+.plan-line.deleting { opacity: .5; text-decoration: line-through; pointer-events: none; }
