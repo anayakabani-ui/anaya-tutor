@@ -34,7 +34,8 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          CAL_VIEWS, CAL_FEW, addMove, BANK, BANK_PICK, PICK_LEASTS, bankTabs, pickLine, withMoves, calendarDays,
          HOUR_PX, CAL_LAYOUTS, clockWords, minutesOf, hhmm, dropTime, mergedTimes, timeColumn, firstScroll, scrollFloor, CAL_LOCK_HOUR, settleSwaps, swapSig, calendarStep, calendarTitle, calendarCells,
          moveProblem, settleMoves, notesIncoming, noteVersion,
-         splitLine, parseChat, chatWaiting, APP_VERSION, nowScroll, eventAfterDrag } from "./logic.js";
+         splitLine, parseChat, chatWaiting, APP_VERSION, nowScroll, eventAfterDrag,
+         planCheck, repeatWords } from "./logic.js";
 
 const $ = (id) => document.getElementById(id);
 const show = (id, on) => { $(id).hidden = !on; };
@@ -116,7 +117,8 @@ const state = { tasks: [], exams: [], timetable: [], visits: [], day: null, meta
                 // 2026-10-17b: events changed here, waiting for the laptop
                 // (id -> {day, title, start, end, atMs}); the one being
                 // renamed; tasks typed onto a day or into the bank.
-                eventsEdited: new Map(), calRename: "", calAdding: "", addsWaiting: [] };
+                eventsEdited: new Map(), calRename: "", calAdding: "", addsWaiting: [],
+                goalsWaiting: new Map() };   // 2026-10-18: list -> {count, by, atMs}
 let cloud = null;                     // {db, base} once she's signed in
 
 // An edit for the laptop to make. It lands in `edits`, the laptop takes it
@@ -634,7 +636,7 @@ function placeAt(held, day, at) {
   });
 }
 
-function addEvent(day, title, start, end) {
+function addEvent(day, title, start, end, quiet) {
   const words = String(title || "").trim();
   if (!words) { state.calSaid = "Give it a name first."; drawCalendar(); return; }
   if (start && end && end <= start) { state.calSaid = "It has to end after it starts."; drawCalendar(); return; }
@@ -643,7 +645,7 @@ function addEvent(day, title, start, end) {
   state.calEventForm = false;
   state.calSaid = "Added \u201c" + words + "\u201d. The laptop keeps quiet while it's on.";
   drawCalendar();
-  sendEdit({ kind: "event_add", day, title: words, start: start || "", end: end || "" });
+  sendEdit({ kind: "event_add", day, title: words, start: start || "", end: end || "", quiet: Boolean(quiet) });
 }
 
 function dropEvent(e) {
@@ -663,7 +665,7 @@ function editEvent(e, change) {
     drawCalendar();
     return;
   }
-  const next = { day: e.day, title: e.title, start: e.start || "", end: e.end || "", ...change };
+  const next = { day: e.day, title: e.title, start: e.start || "", end: e.end || "", quiet: Boolean(e.quiet), ...change };
   if (!String(next.title || "").trim()) next.title = e.title;
   if (next.start && next.end && next.end <= next.start) {
     state.calSaid = "It has to end after it starts.";
@@ -677,7 +679,7 @@ function editEvent(e, change) {
     (next.end ? " to " + clockWords(next.end) : "") : ", all day") + ".";
   drawCalendar();
   sendEdit({ kind: "event_edit", id: String(e.id), day: next.day, title: next.title,
-             start: next.start, end: next.end });
+             start: next.start, end: next.end, quiet: Boolean(next.quiet) });
 }
 
 // Events with her changes on top, until the laptop shows them (or 2 min).
@@ -693,6 +695,32 @@ function eventsNow(found, nowMs) {
     .map((e) => (state.eventsEdited.has(String(e.id)) ? { ...e, ...state.eventsEdited.get(String(e.id)) } : e));
 }
 
+// 2026-10-18: an all-day event dragged to another day, or onto an hour
+// (then it gets that time, an hour long).
+function eventChipDrag(chip, e) {
+  chip.draggable = true;
+  chip.title = "Drag to another day, or onto an hour to give it a time. Press to change it.";
+  chip.addEventListener("dragstart", (event) => {
+    state.dragging = true;
+    state.calDrag = { event: e, from: e.day, text: e.title };
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", e.title);
+  });
+  chip.addEventListener("dragend", () => {
+    state.dragging = false;
+    state.calDrag = null;
+    document.querySelectorAll(".over").forEach((d) => d.classList.remove("over"));
+    if (state.calStale) { state.calStale = false; drawCalendar(); }
+  });
+}
+
+function eventDropped(e, day, at) {
+  if (!at) return editEvent(e, { day, start: "", end: "" });
+  const length = (minutesOf(e.end) || 0) - (minutesOf(e.start) || 0);
+  const end = hhmm(Math.min(23 * 60 + 59, minutesOf(at) + (length > 0 ? length : 60)));
+  return editEvent(e, { day, start: at, end });
+}
+
 // The bar under the calendar's top for the picked event: name, times,
 // all day, take it off.
 function eventEditor(e) {
@@ -705,9 +733,17 @@ function eventEditor(e) {
   start.type = "time"; start.value = e.start || ""; start.setAttribute("aria-label", "Starts");
   const end = el("input");
   end.type = "time"; end.value = e.end || ""; end.setAttribute("aria-label", "Ends");
-  const save = () => editEvent(e, { title: name.value.trim(), start: start.value, end: end.value });
+  // 2026-10-18: "i cant drag change the date of the event". Its day here
+  // too, and whether it keeps the laptop quiet.
+  const when = el("input");
+  when.type = "date"; when.value = e.day; when.min = isoDay(new Date());
+  when.setAttribute("aria-label", "Which day");
+  const quiet = quietBox(e.quiet);
+  const save = () => editEvent(e, { title: name.value.trim(), start: start.value, end: end.value,
+                                    day: when.value || e.day, quiet: quiet.box.checked });
   name.addEventListener("keydown", (event) => { if (event.key === "Enter") save(); });
-  row.append(name, el("span", "muted", "from"), start, el("span", "muted", "to"), end,
+  quiet.box.addEventListener("change", save);
+  row.append(name, when, el("span", "muted", "from"), start, el("span", "muted", "to"), end, quiet.label,
     button("Save", "", save),
     button("All day", "quiet", () => editEvent(e, { start: "", end: "" })),
     button("Take it off", "quiet", () => dropEvent(e)),
@@ -846,6 +882,18 @@ function addTaskBox(day, list) {
   return wrap;
 }
 
+// 2026-10-18: "the option to have 'laptop is quiet' off bc its more just
+// for me, this is to plan". Off unless she ticks it.
+function quietBox(on) {
+  const label = el("label", "quiet-box");
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.checked = Boolean(on);
+  label.title = "Ticked: the tutor keeps quiet while this is on. Not ticked: it's just there for planning.";
+  label.append(box, document.createTextNode(" Laptop quiet"));
+  return { label, box };
+}
+
 function eventForm(days, now) {
   const form = el("div", "plan-event-form");
   const title = el("input", "plan-event-title");
@@ -863,8 +911,9 @@ function eventForm(days, now) {
   const end = el("input");
   end.type = "time";
   end.setAttribute("aria-label", "Ends");
-  form.append(title, day, el("span", "muted", "from"), start, el("span", "muted", "to"), end,
-    button("Add", "", () => addEvent(day.value, title.value, start.value, end.value)),
+  const quiet = quietBox(false);
+  form.append(title, day, el("span", "muted", "from"), start, el("span", "muted", "to"), end, quiet.label,
+    button("Add", "", () => addEvent(day.value, title.value, start.value, end.value, quiet.box.checked)),
     button("Cancel", "quiet", () => { state.calEventForm = false; drawCalendar(); }));
   setTimeout(() => title.focus(), 0);
   return form;
@@ -899,6 +948,7 @@ function timesDrop(target, day, onHours) {
     const held = state.calDrag;
     state.dragging = false; state.calDrag = null; state.calStale = false;
     if (!held) return;
+    if (held.event) { eventDropped(held.event, day, onHours ? at(event) : ""); return; }   // 2026-10-18
     if (onHours) { placeAt(held, day, at(event)); return; }
     if (held.from !== day) { moveLine(held, day); return; }
     if (held.timed) sendTime(day, held.text, "");
@@ -993,6 +1043,7 @@ function drawTimes(box, days, found, now, pick) {
           state.calEventPick = item.event; drawCalendar();
         });
         if (cell.past) chip.disabled = true;
+        else eventChipDrag(chip, item.event);     // 2026-10-18
         c.append(chip);
         return;
       }
@@ -1217,6 +1268,7 @@ function calDrop(target, dayId, pick) {
   target.addEventListener("dragover", (event) => {
     if (!state.calDrag || state.calDrag.from === dayId) return;
     if (state.calDrag.from === BANK_PICK && dayId === BANK) return;   // 2026-10-16m
+    if (state.calDrag.event && dayId === BANK) return;                 // 2026-10-18
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
     target.classList.add("over");
@@ -1228,11 +1280,62 @@ function calDrop(target, dayId, pick) {
     event.preventDefault();
     const held = state.calDrag;
     state.dragging = false; state.calDrag = null; state.calStale = false;
+    if (held && held.event) { if (dayId !== BANK) eventDropped(held.event, dayId, ""); return; }   // 2026-10-18
     if (held) moveLine(held, dayId);
   });
   if (pick && !pick.repeat && pick.from !== dayId && !(pick.from === BANK_PICK && dayId === BANK)) {
     target.append(button(dayId === BANK ? "Put in the bank" : "Move here", "plan-here", () => moveLine(pick, dayId)));
   }
+}
+
+// 2026-10-18: the plan check. "i can choose how many i want to finish by
+// what date. then itll say with the current plan setup ... u will have [x]
+// tasks leftover from whatever lists". One row a list: how many are in it,
+// "Finish [n] by [date]", and what the days up to then have on them.
+function drawPlanCheck(box, found) {
+  const now = new Date();
+  // Goals she's just set win until the laptop has them (or 2 min).
+  const goals = { ...(found.goals || {}) };
+  state.goalsWaiting.forEach((g, name) => {
+    const real = goals[name];
+    if (Date.now() - g.atMs > 120000 || (real && real.count === g.count && real.by === g.by) ||
+        (!real && !g.count)) { state.goalsWaiting.delete(name); return; }
+    if (g.count) goals[name] = { count: g.count, by: g.by }; else delete goals[name];
+  });
+  const check = planCheck({ ...found, goals }, now);
+  const card = el("section", "plan-check");
+  card.append(el("p", "plan-head", "Plan check"),
+    el("p", "plan-check-says" + (check.total ? " short" : ""), check.words));
+  const table = el("div", "plan-check-rows");
+  check.rows.forEach((row) => {
+    const line = el("div", "plan-check-row" + (row.short ? " short" : ""));
+    line.append(el("span", "plan-check-name", row.name), el("span", "muted plan-check-open", row.open + " to do"));
+    const count = document.createElement("input");
+    count.type = "number"; count.min = "0"; count.max = String(Math.max(row.open, 1));
+    count.value = row.goal ? String(row.goal.count) : "";
+    count.placeholder = "0";
+    count.setAttribute("aria-label", "How many from " + row.name);
+    const by = document.createElement("input");
+    by.type = "date"; by.min = isoDay(now);
+    by.value = row.goal ? row.goal.by : "";
+    by.setAttribute("aria-label", "By when");
+    const send = () => {
+      const n = Math.max(0, Math.round(Number(count.value) || 0));
+      if (n && !by.value) return;          // waits for the date
+      state.goalsWaiting.set(row.name, { count: n, by: by.value, atMs: Date.now() });
+      drawCalendar();
+      sendEdit({ kind: "bank_goal", list: row.name, count: n, by: by.value || "" });
+    };
+    count.addEventListener("change", send);
+    by.addEventListener("change", send);
+    line.append(el("span", "muted", "Finish"), count, el("span", "muted", "by"), by);
+    line.append(el("span", "plan-check-result", !row.goal ? ""
+      : row.late ? "that date's gone"
+      : row.planned + " planned by then" + (row.short ? ", " + row.short + " short" : ", covered")));
+    table.append(line);
+  });
+  if (check.rows.length) card.append(table);
+  box.append(card);
 }
 
 // 2026-10-17: split and repeat, picked on the calendar.
@@ -1245,7 +1348,17 @@ function splitPicked(pick, parts) {
 
 function repeatForm(pick, parts) {
   const form = el("div", "plan-bar repeat-form");
-  form.append(el("span", "muted", "Every day from this day until"));
+  // 2026-10-18: "i can also change repeat to be every [x] hours/days/weeks"
+  const every = document.createElement("input");
+  every.type = "number"; every.min = "1"; every.max = "60"; every.value = "1";
+  every.className = "repeat-every";
+  every.setAttribute("aria-label", "Every how many");
+  const unit = document.createElement("select");
+  unit.setAttribute("aria-label", "Hours, days or weeks");
+  [["hour", "hours"], ["day", "days"], ["week", "weeks"]].forEach(([v, w]) => {
+    const o = el("option", "", w); o.value = v; if (v === "day") o.selected = true; unit.append(o);
+  });
+  form.append(el("span", "muted", "Every"), every, unit, el("span", "muted", "from this day until"));
   const until = document.createElement("input");
   until.type = "date";
   until.min = pick.from;
@@ -1261,19 +1374,22 @@ function repeatForm(pick, parts) {
     form.append(label);
   }
   form.append(button("Repeat it", "", () => {
-    const times = apart && apart.checked ? parts.n : 1;
+    const times = apart && apart.checked && unit.value !== "hour" ? parts.n : 1;
+    const n = Math.max(1, Math.min(60, Math.round(Number(every.value) || 1)));
     state.calRepeat = null;
     state.calPick = null;
     state.calSaid = "Repeating \u201c" + (times > 1 ? parts.one + "\u201d \u00d7 " + times : pick.text + "\u201d") +
-      " every day" + (until.value ? " until " + dayHead(until.value, new Date()) : "") + ". The laptop sets it up in about 20 seconds.";
+      " " + repeatWords({ every: n, unit: unit.value }) +
+      (until.value ? " until " + dayHead(until.value, new Date()) : "") + ". The laptop sets it up in about 20 seconds.";
     drawCalendar();
     sendEdit({ kind: "repeat_add", day: pick.from, text: pick.text, until: until.value || "",
-               times, one: times > 1 ? parts.one : "" });
+               times, one: times > 1 ? parts.one : "", every: n, unit: unit.value });
   }), button("Cancel", "quiet", () => { state.calRepeat = null; drawCalendar(); }));
   return form;
 }
 
 function stopRepeat(text) {
+  text = String(text).replace(/\s+\(every [^)]*\)$/, "");    // an hourly one's label
   state.calPick = null;
   state.calSaid = "Stopped. \u201c" + text + "\u201d won't come back (the laptop takes it in about 20 seconds).";
   drawCalendar();
@@ -1480,6 +1596,7 @@ function drawCalendar() {
   if (state.calLayout === "times" && state.calView !== "month") {
     drawTimes(box, days, found, now, pick);
     drawBank(box, found, pick);
+    drawPlanCheck(box, found);             // 2026-10-18
     box.append(el("p", "muted", "Drag a task onto an hour to give it a rough time, or to the top to take it off. " +
       "Meals and prayers stay on Today. Days that have gone can't be changed."));
     return;
@@ -1515,6 +1632,7 @@ function drawCalendar() {
   });
   box.append(grid);
   drawBank(box, found, pick);
+  drawPlanCheck(box, found);               // 2026-10-18
   box.append(el("p", "muted", "Only the day changes, never the words. Meals and prayers stay on Today. Days that have gone can't be changed."));
 }
 
