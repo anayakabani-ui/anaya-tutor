@@ -114,7 +114,7 @@ const state = { tasks: [], exams: [], timetable: [], visits: [], day: null, meta
                 dragging: false, calStale: false, calDrag: null,
                 notes: null,           // live/notes off the laptop
                 // 2026-10-17: the bank's folds, the repeat form, the chat.
-                bankShut: new Set(), bankGroupsOpen: new Set(), calRepeat: null,
+                bankShut: new Set(), bankGroupsOpen: new Set(), calRepeat: null, calMulti: [], calMultiRepeat: false, calHidePast: false,
                 chat: [], chatSeen: false, chatWaiting: [],
                 // 2026-10-17b: events changed here, waiting for the laptop
                 // (id -> {day, title, start, end, atMs}); the one being
@@ -654,8 +654,17 @@ function addEvent(day, title, start, end, quiet, color) {
 // 2026-10-18b: a line that came from a subject list takes that subject's
 // colour, wherever it shows (the calendar, the bank).
 function subjectFor(line) {
-  const words = String((line && (line.text || line.raw)) || "").replace(/^>\s*/, "").trim().toLowerCase();
-  return subjectOfLine.get(words) || "";
+  // 2026-10-18c: "tasks from subjects must have those colours". Matches the
+  // line's words (ignoring its worth and "(optional)"), a "do 1 from [X]"
+  // card, and a line that starts "physics:".
+  const raw = String((line && (line.text || line.raw)) || "").replace(/^>\s*/, "").trim();
+  const words = raw.replace(/\s*\[\d+\]\s*$/, "").replace(/\s*\(optional\)\s*$/i, "").trim().toLowerCase();
+  if (subjectOfLine.has(words)) return subjectOfLine.get(words);
+  const pick = /^do 1 from \[([^\]]+)\]/i.exec(raw);
+  if (pick) return pick[1].trim();
+  const head = /^([a-z& ]+):/i.exec(raw);
+  if (head && subjectColour(head[1].trim())) return head[1].trim();
+  return "";
 }
 function applySubject(node, line) {
   const colour = subjectColour(subjectFor(line));
@@ -1290,7 +1299,10 @@ function calLine(line, dayId, past, pick) {
   item.setAttribute("aria-pressed", String(Boolean(picked)));
   item.title = head ? "Drag it to another day and the lines under it go too"
     : "Drag to another day or the bank, or press to pick it (and lock it to this day)";
-  item.addEventListener("click", () => {
+  if ((state.calMulti || []).some((m) => m.key === dayId + "|" + line.raw)) item.classList.add("multi");
+  item.addEventListener("click", (ev) => {
+    // 2026-10-18c: shift-click picks several at once (to repeat or bank them).
+    if (ev.shiftKey && !line.repeat) { toggleMulti(line.raw, dayId); return; }
     state.calPick = picked ? null : { text: line.raw, from: dayId, repeat: Boolean(line.repeat) };
     state.calSaid = "";
     state.calRepeat = null;
@@ -1429,6 +1441,68 @@ function splitPicked(pick, parts) {
   state.calSaid = "Splitting into " + parts.n + " \u00d7 \u201c" + parts.one + "\u201d. The laptop does it in about 20 seconds.";
   drawCalendar();
   return sendEdit({ kind: "line_split", day: pick.from, text: pick.text, n: parts.n, one: parts.one });
+}
+
+// 2026-10-18c: shift-click several tasks, then repeat them or bank them.
+function toggleMulti(text, from) {
+  const key = from + "|" + text;
+  const has = state.calMulti.some((m) => m.key === key);
+  state.calMulti = has ? state.calMulti.filter((m) => m.key !== key)
+    : state.calMulti.concat([{ key, text, from }]);
+  state.calPick = null;
+  state.calSaid = "";
+  drawCalendar();
+}
+
+function multiBar() {
+  const n = state.calMulti.length;
+  const wrap = el("div", "multi-wrap");
+  const row = el("div", "plan-bar multi-bar");
+  row.append(el("p", "plan-title", n + (n === 1 ? " task" : " tasks") + " picked. Shift-click to add more."));
+  row.append(button("Repeat them", "", () => { state.calMultiRepeat = !state.calMultiRepeat; drawCalendar(); }));
+  row.append(button("Put them in the bank", "quiet", () => {
+    const picked = state.calMulti.filter((m) => m.from !== BANK);
+    state.calMulti = [];
+    state.calMultiRepeat = false;
+    state.calSaid = "Putting " + picked.length + " in the bank. The laptop takes them in about 20 seconds.";
+    picked.forEach((m) => moveLine({ text: m.text, from: m.from }, BANK));
+    drawCalendar();
+  }));
+  row.append(button("Clear", "quiet", () => { state.calMulti = []; state.calMultiRepeat = false; drawCalendar(); }));
+  wrap.append(row);
+  if (state.calMultiRepeat) wrap.append(multiRepeatForm());
+  return wrap;
+}
+
+function multiRepeatForm() {
+  const form = el("div", "plan-bar repeat-form");
+  const every = document.createElement("input");
+  every.type = "number"; every.min = "1"; every.max = "60"; every.value = "1";
+  every.className = "repeat-every";
+  every.setAttribute("aria-label", "Every how many");
+  const unit = document.createElement("select");
+  unit.setAttribute("aria-label", "Hours, days or weeks");
+  [["hour", "hours"], ["day", "days"], ["week", "weeks"]].forEach(([v, w]) => {
+    const o = el("option", "", w); o.value = v; if (v === "day") o.selected = true; unit.append(o);
+  });
+  const until = document.createElement("input");
+  until.type = "date"; until.min = isoDay(new Date());
+  until.title = "Leave it empty to keep it going until you stop it";
+  form.append(el("span", "muted", "Every"), every, unit, el("span", "muted", "from today until"), until);
+  form.append(button("Repeat them all", "", () => {
+    const n = Math.max(1, Math.min(60, Math.round(Number(every.value) || 1)));
+    const today = isoDay(new Date());
+    const list = state.calMulti.slice();
+    state.calMulti = [];
+    state.calMultiRepeat = false;
+    state.calSaid = "Repeating " + list.length + " " + (list.length === 1 ? "task" : "tasks") + " " +
+      repeatWords({ every: n, unit: unit.value }) + (until.value ? " until " + dayHead(until.value, new Date()) : "") +
+      ". The laptop sets them up in about 20 seconds.";
+    drawCalendar();
+    list.forEach((m) => sendEdit({ kind: "repeat_add", day: m.from === BANK || m.from === BANK_PICK ? today : m.from,
+      text: m.text, until: until.value || "", times: 1, one: "", every: n, unit: unit.value }));
+  }), button("Cancel", "quiet", () => { state.calMultiRepeat = false; drawCalendar(); }));
+  return form;
 }
 
 function repeatForm(pick, parts) {
@@ -1607,7 +1681,12 @@ function drawCalendar() {
     subjectOfLine.set(words.toLowerCase(), list);
   });
   const anchor = state.calAnchor || isoDay(now);
-  const days = calendarDays(anchor, state.calView);
+  const inView = calendarDays(anchor, state.calView);
+  // 2026-10-18c: "an option to hide past days". If every day in view has
+  // gone, they're shown anyway so there's something to look at.
+  const todayIso = isoDay(now);
+  const fromToday = inView.filter((d) => d >= todayIso);
+  const days = state.calHidePast && fromToday.length ? fromToday : inView;
   // 2026-10-16e: "the ui on the website looks CLUTTERED as heck now at
   // the top. i should alteast be able to hover and understand what the
   // funciton is". One row: arrows, the dates, how much to show, and three
@@ -1659,6 +1738,12 @@ function drawCalendar() {
     });
     few.title = "Show every line on a day, or a few and \u201cand N more\u201d";
     more.append(el("span", "muted", "Lines a day"), few);
+    const past = chipRow("ring-switch", "Past days", [["show", "Show"], ["hide", "Hide past"]],
+      state.calHidePast ? "hide" : "show", (value) => {
+        state.calHidePast = value === "hide"; keep("tutor-cal-hide-past", state.calHidePast); drawCalendar();
+      });
+    past.title = "Hide the days that have gone, so the week starts today";
+    more.append(el("span", "muted", "Past days"), past);
     box.append(bar, more);
     bar.dataset.more = "1";
   }
@@ -1703,6 +1788,7 @@ function drawCalendar() {
     box.append(row);
     if (state.calRepeat && state.calRepeat.text === pick.text) box.append(repeatForm(pick, parts));
   }
+  if (state.calMulti.length) box.append(multiBar());                      // 2026-10-18c
   if (state.calEventPick) box.append(eventEditor(state.calEventPick));   // 2026-10-17b
   if (pick && pick.timed) {
     box.append(button("Take its time off", "quiet", () => sendTime(pick.from, pick.text, "")));
@@ -3063,6 +3149,7 @@ function start() {
   state.calView = recall("tutor-cal", "three");
   state.calLayout = recall("tutor-cal-layout", "times");
   state.calFew = Number(recall("tutor-cal-few", "0")) || 0;
+  state.calHidePast = recall("tutor-cal-hide-past", false) === true;     // 2026-10-18c
   state.calHoursLocked = recall("tutor-cal-hours-lock", "1") !== "0";   // 2026-10-16e
   state.bankTab = String(recall("tutor-bank-tab", "") || "");          // 2026-10-16m
   try { state.bankShut = new Set(recall("tutor-bank-shut", []) || []); } catch (e) { state.bankShut = new Set(); }
