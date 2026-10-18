@@ -35,9 +35,11 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          HOUR_PX, CAL_LAYOUTS, clockWords, minutesOf, hhmm, dropTime, mergedTimes, timeColumn, firstScroll, scrollFloor, CAL_LOCK_HOUR, settleSwaps, swapSig, calendarStep, calendarTitle, calendarCells,
          moveProblem, settleMoves, notesIncoming, noteVersion,
          splitLine, parseChat, chatWaiting, APP_VERSION, nowScroll, eventAfterDrag,
-         planCheck, repeatWords } from "./logic.js";
+         planCheck, repeatWords, subjectColour, eventColour, EVENT_COLOURS } from "./logic.js";
 
 const $ = (id) => document.getElementById(id);
+// 2026-10-18b: a line's subject, by its words, from the bank's subject lists.
+const subjectOfLine = new Map();
 const show = (id, on) => { $(id).hidden = !on; };
 
 if ("serviceWorker" in navigator) {
@@ -636,16 +638,53 @@ function placeAt(held, day, at) {
   });
 }
 
-function addEvent(day, title, start, end, quiet) {
+function addEvent(day, title, start, end, quiet, color) {
   const words = String(title || "").trim();
   if (!words) { state.calSaid = "Give it a name first."; drawCalendar(); return; }
   if (start && end && end <= start) { state.calSaid = "It has to end after it starts."; drawCalendar(); return; }
   state.eventsWaiting.push({ id: "w" + Date.now(), day, title: words, start: start || "", end: end || "",
-                             atMs: Date.now() });
+                             color: eventColour(color), atMs: Date.now() });
   state.calEventForm = false;
   state.calSaid = "Added \u201c" + words + "\u201d. The laptop keeps quiet while it's on.";
   drawCalendar();
-  sendEdit({ kind: "event_add", day, title: words, start: start || "", end: end || "", quiet: Boolean(quiet) });
+  sendEdit({ kind: "event_add", day, title: words, start: start || "", end: end || "", quiet: Boolean(quiet),
+             color: eventColour(color) });
+}
+
+// 2026-10-18b: a line that came from a subject list takes that subject's
+// colour, wherever it shows (the calendar, the bank).
+function subjectFor(line) {
+  const words = String((line && (line.text || line.raw)) || "").replace(/^>\s*/, "").trim().toLowerCase();
+  return subjectOfLine.get(words) || "";
+}
+function applySubject(node, line) {
+  const colour = subjectColour(subjectFor(line));
+  if (!colour) return;
+  node.classList.add("subj");
+  node.style.setProperty("--subj", colour);
+}
+
+// 2026-10-18b: colour swatches for an event (the editor and the add form).
+// Picking one sends it at once; "No colour" puts the default back.
+function colourRow(current, onPick) {
+  const row = el("div", "colour-row");
+  row.setAttribute("role", "group");
+  row.setAttribute("aria-label", "Event colour");
+  const mine = eventColour(current);
+  const options = [["", "No colour"]].concat(EVENT_COLOURS.map((c) => [c, c]));
+  options.forEach(([value, label]) => {
+    const dot = button("", "colour-dot" + (value ? "" : " none") + (value === mine ? " on" : ""), () => {
+      row.querySelectorAll(".colour-dot.on").forEach((d) => d.classList.remove("on"));
+      dot.classList.add("on");
+      onPick(value);
+    });
+    if (value) dot.style.setProperty("--dot", value);
+    dot.title = value ? "Colour this event " + label : "No colour";
+    dot.setAttribute("aria-label", value ? "Colour " + value : "No colour");
+    dot.setAttribute("aria-pressed", String(value === mine));
+    row.append(dot);
+  });
+  return row;
 }
 
 function dropEvent(e) {
@@ -665,7 +704,8 @@ function editEvent(e, change) {
     drawCalendar();
     return;
   }
-  const next = { day: e.day, title: e.title, start: e.start || "", end: e.end || "", quiet: Boolean(e.quiet), ...change };
+  const next = { day: e.day, title: e.title, start: e.start || "", end: e.end || "", quiet: Boolean(e.quiet),
+                 color: eventColour(e.color), ...change };
   if (!String(next.title || "").trim()) next.title = e.title;
   if (next.start && next.end && next.end <= next.start) {
     state.calSaid = "It has to end after it starts.";
@@ -679,7 +719,7 @@ function editEvent(e, change) {
     (next.end ? " to " + clockWords(next.end) : "") : ", all day") + ".";
   drawCalendar();
   sendEdit({ kind: "event_edit", id: String(e.id), day: next.day, title: next.title,
-             start: next.start, end: next.end, quiet: Boolean(next.quiet) });
+             start: next.start, end: next.end, quiet: Boolean(next.quiet), color: eventColour(next.color) });
 }
 
 // Events with her changes on top, until the laptop shows them (or 2 min).
@@ -744,6 +784,7 @@ function eventEditor(e) {
   name.addEventListener("keydown", (event) => { if (event.key === "Enter") save(); });
   quiet.box.addEventListener("change", save);
   row.append(name, when, el("span", "muted", "from"), start, el("span", "muted", "to"), end, quiet.label,
+    colourRow(e.color, (c) => editEvent(e, { color: c })),
     button("Save", "", save),
     button("All day", "quiet", () => editEvent(e, { start: "", end: "" })),
     button("Take it off", "quiet", () => dropEvent(e)),
@@ -912,8 +953,10 @@ function eventForm(days, now) {
   end.type = "time";
   end.setAttribute("aria-label", "Ends");
   const quiet = quietBox(false);
+  let colour = "";
   form.append(title, day, el("span", "muted", "from"), start, el("span", "muted", "to"), end, quiet.label,
-    button("Add", "", () => addEvent(day.value, title.value, start.value, end.value, quiet.box.checked)),
+    colourRow("", (c) => { colour = c; }),
+    button("Add", "", () => addEvent(day.value, title.value, start.value, end.value, quiet.box.checked, colour)),
     button("Cancel", "quiet", () => { state.calEventForm = false; drawCalendar(); }));
   setTimeout(() => title.focus(), 0);
   return form;
@@ -970,6 +1013,9 @@ function timedBlock(item, day, past) {
   const short = item.end - item.start <= 45;
   const block = el(past ? "div" : "button", "tg-item" + (isEvent ? " event" : "") + (short ? " short" : ""));
   if (!past) block.type = "button";
+  // 2026-10-18b: an event she coloured keeps its colour; a subject line its subject's.
+  if (isEvent && eventColour(item.event.color)) { block.classList.add("coloured"); block.style.setProperty("--ev", item.event.color); }
+  if (!isEvent && item.line) applySubject(block, item.line);
   block.style.top = top + "px";
   block.style.height = tall + "px";
   block.style.left = "calc(" + (item.lane * width) + "% + 2px)";
@@ -1042,6 +1088,7 @@ function drawTimes(box, days, found, now, pick) {
         const chip = button(item.event.title, "plan-mark event", () => {
           state.calEventPick = item.event; drawCalendar();
         });
+        if (eventColour(item.event.color)) { chip.classList.add("coloured"); chip.style.setProperty("--ev", item.event.color); }
         if (cell.past) chip.disabled = true;
         else eventChipDrag(chip, item.event);     // 2026-10-18
         c.append(chip);
@@ -1131,6 +1178,8 @@ function drawBank(box, found, pick) {
   tabs.forEach((tab) => {
     const shut = state.bankShut.has(tab.name);
     const card = el("section", "bank-sub" + (shut ? " shut" : ""));
+    const colour = subjectColour(tab.name);          // 2026-10-18b
+    if (colour) { card.classList.add("subj"); card.style.setProperty("--subj", colour); }
     const count = tab.lines.filter((l) => !String(l.text).trim().startsWith(">")).length;
     const head = button("", "bank-sub-head", () => {
       if (shut) state.bankShut.delete(tab.name); else state.bankShut.add(tab.name);
@@ -1193,6 +1242,7 @@ function pickCard(name) {
   const picked = state.calPick && state.calPick.from === BANK_PICK && state.calPick.text === text;
   const go = el("button", "plan-line bank-pick-line" + (picked ? " picked" : ""), "Do 1 from " + name);
   go.type = "button";
+  if (subjectColour(name)) { go.classList.add("subj"); go.style.setProperty("--subj", subjectColour(name)); }
   go.draggable = true;
   go.title = "Drag onto a day: that day gets \u201c" + text + "\u201d. Tick it there and the tutor asks which one you did.";
   go.setAttribute("aria-pressed", String(Boolean(picked)));
@@ -1231,6 +1281,7 @@ function calLine(line, dayId, past, pick) {
     (line.repeat ? " repeat" : "") + (line.locked ? " locked" : ""),
     (line.sub ? "> " : "") + line.text);
   if (line.locked) item.prepend(icon("lock"));
+  if (!line.head) applySubject(item, line);      // 2026-10-18b
   if (line.repeat) item.title = "Comes back every day. It lands on this day's list on the day.";
   if (!can) return item;
   item.type = "button";
@@ -1308,13 +1359,38 @@ function drawPlanCheck(box, found) {
   const shut = Boolean(recall("tutor-plan-shut", false));
   const card = el("section", "plan-check" + (shut ? " shut" : ""));
   const head = el("div", "plan-check-top");
-  const fold = button("", "plan-check-fold", () => { keep("tutor-plan-shut", !shut); drawCalendar(); });
-  fold.append(el("span", "fold-arrow" + (shut ? "" : " open"), ""));
+  // 2026-10-18b: the old arrow was too small to read as a button. A plain
+  // word on the right: "Hide" or "Show".
+  const fold = button(shut ? "Show" : "Hide", "plan-check-fold", () => { keep("tutor-plan-shut", !shut); drawCalendar(); });
   fold.title = shut ? "Show the plan check" : "Hide the plan check";
   fold.setAttribute("aria-expanded", String(!shut));
-  head.append(fold, el("p", "plan-head", "Plan check"));
+  head.append(el("p", "plan-head", "Plan check"), fold);
   card.append(head, el("p", "plan-check-says" + (check.total ? " short" : ""), check.words));
   if (shut) { box.append(card); return; }
+  // 2026-10-18b: "i want to mass set the date for x amount to be done for
+  // all of them". One count and one date, put on every list at once (a
+  // list never gets more than it has open).
+  const all = el("div", "plan-check-all");
+  const allCount = document.createElement("input");
+  allCount.type = "number"; allCount.min = "1";
+  allCount.placeholder = "How many";
+  allCount.setAttribute("aria-label", "How many from every list");
+  const allBy = document.createElement("input");
+  allBy.type = "date"; allBy.min = isoDay(now);
+  allBy.setAttribute("aria-label", "By when, for every list");
+  const allGo = button("Set for all lists", "plan-check-all-go", () => {
+    const n = Math.max(0, Math.round(Number(allCount.value) || 0));
+    if (!n || !allBy.value) { state.calSaid = "Put a number and a date first."; drawCalendar(); return; }
+    check.rows.forEach((row) => {
+      const count = Math.min(n, row.open);
+      state.goalsWaiting.set(row.name, { count, by: allBy.value, atMs: Date.now() });
+      sendEdit({ kind: "bank_goal", list: row.name, count, by: allBy.value });
+    });
+    state.calSaid = "Set on every list. The laptop takes it in about 20 seconds.";
+    drawCalendar();
+  });
+  all.append(el("span", "muted", "Finish"), allCount, el("span", "muted", "from every list by"), allBy, allGo);
+  card.append(all);
   const table = el("div", "plan-check-rows");
   check.rows.forEach((row) => {
     const line = el("div", "plan-check-row" + (row.short ? " short" : ""));
@@ -1522,6 +1598,14 @@ function drawCalendar() {
   }
   state.moves = settleMoves(state.moves, found, Date.now());
   state.swaps = settleSwaps(state.swaps, found, Date.now());
+  // 2026-10-18b: which subject each line belongs to, from the bank's lists.
+  subjectOfLine.clear();
+  [].concat(found.bank || [], found.planned || []).forEach((l) => {
+    const words = String((l && l.text) || "").trim();
+    const list = String((l && l.list) || "").trim();
+    if (!words || words.startsWith(">") || !subjectColour(list)) return;
+    subjectOfLine.set(words.toLowerCase(), list);
+  });
   const anchor = state.calAnchor || isoDay(now);
   const days = calendarDays(anchor, state.calView);
   // 2026-10-16e: "the ui on the website looks CLUTTERED as heck now at
