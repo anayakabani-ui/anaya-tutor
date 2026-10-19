@@ -688,3 +688,22 @@ button.plan-swap:hover { background: none; box-shadow: none; }
 /* 2026-10-19: a task's bottom pulls longer, like an event's */
 .tg-item:not(.event):hover .tg-resize::after { opacity: .45; }
 .tg-item.pulling { opacity: .85; z-index: 5; box-shadow: var(--shadow-up); }
+/* 2026-10-19: side by side, the name gets the room (its time shows on hover) */
+.tg-item.narrow .tg-item-time { display: none; }
+.tg-item.narrow { padding-left: 4px; padding-right: 4px; }
+.tg-item.short .tg-item-time { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; }
+.tg-item.short .tg-item-name { flex: 1 1 auto; min-width: 2.5em; }
+/* 2026-10-19: the box she drags out to pick tasks */
+.box-select { position: fixed; z-index: 50; pointer-events: none; border: 1.5px solid var(--accent); border-radius: 6px; background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.tg-col:not(.past) { cursor: crosshair; }
+.tg-item.multi, .plan-line.multi { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* 2026-10-19c: zoomed hours: a fainter line every half (or quarter) hour */
+.tg.zoomed .tg-col { background-image:
+  repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--hour) - 1px), var(--line, rgba(127,127,127,0.2)) calc(var(--hour) - 1px), var(--line, rgba(127,127,127,0.2)) var(--hour)),
+  repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--hour) / 2 - 1px), rgba(127,127,127,0.09) calc(var(--hour) / 2 - 1px), rgba(127,127,127,0.09) calc(var(--hour) / 2)); }
+.tg-hour.part { font-size: 10px; opacity: .7; }
+/* 2026-10-19c: the "Do some from" card and a sublist's own Do 1 card */
+.bank-general .gen-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+.bank-general select { width: auto; flex: 0 1 auto; min-width: 0; font: inherit; padding: 3px 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: inherit; max-width: 100%; }
+.bank-general.subj { border-top: 4px solid var(--subj); }
+.bank-pick.small .bank-pick-line { font-size: 12px; padding: 3px 8px; margin: 2px 0 4px 14px; }
