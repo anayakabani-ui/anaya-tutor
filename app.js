@@ -36,7 +36,7 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          moveProblem, settleMoves, notesIncoming, noteVersion,
          splitLine, parseChat, chatWaiting, APP_VERSION, nowScroll, eventAfterDrag,
          planCheck, repeatWords, subjectColour, eventColour, EVENT_COLOURS,
-         pageData, pageHabits, pageSlots, pageGaps, longerBy, pageSteps, carryList, PAGE_MOST_HABITS, PAGE_HABIT_IDEAS } from "./logic.js";
+         pageData, pageHabits, pageSlots, pageGaps, longerBy, pageSteps, carryList, PAGE_MOST_HABITS, PAGE_HABIT_IDEAS, PAGE_MOST_STARS, pageDoneBySlot } from "./logic.js";
 
 const $ = (id) => document.getElementById(id);
 // 2026-10-18b: a line's subject, by its words, from the bank's subject lists.
@@ -495,14 +495,15 @@ function drawToday() {
   box.replaceChildren();
   box.append(ringCard(), dayCard());
   // 2026-10-19i: today's North Star, off the Day page.
-  const star = pageData(state.pages[isoDay(new Date())]).star;
+  const starList = pageData(state.pages[isoDay(new Date())]).stars;   // 2026-10-19n: all of them
+  const star = starList.map((s) => lineLabel(s.text)).join(", ");
   if (star) {
     const go = button("", "today-star", () => {
       page.day = isoDay(new Date());
       const tab = document.querySelector('button[data-tab="page"]');
       if (tab) tab.click();
     });
-    go.append(el("span", "page-star-icon small", "\u2605"), el("span", "grow", "North Star: " + lineLabel(star)));
+    go.append(el("span", "page-star-icon small", "\u2605"), el("span", "grow", (starList.length > 1 ? "North Stars: " : "North Star: ") + star));
     box.append(go);
   } else {
     const go = button("", "today-star none", () => {
@@ -3786,31 +3787,49 @@ function pageAddAt(text, minute) {
 }
 
 function pageStarCard(day, lines, data) {
+  // 2026-10-19n: "id like to add a few north stars". Up to PAGE_MOST_STARS,
+  // each with its own tick and an x to take it off.
   const card = el("div", "page-card page-star");
   const head = el("div", "page-star-head");
-  head.append(el("span", "page-star-icon", "★"), el("span", "page-label", "North Star"));
+  const stars = data.stars || [];
+  head.append(el("span", "page-star-icon", "\u2605"), el("span", "page-label", stars.length > 1 ? "North Stars" : "North Star"));
   card.append(head);
   const open = lines.filter((l) => l.kind === "line" && !l.repeat);
-  if (data.star && !page.starPicking) {
-    const line = open.find((l) => l.raw === data.star);
-    const done = line ? line.done : data.starDone;
+  const save = (list) => savePage(day, { stars: list, star: list.length ? list[0].text : "",
+                                         starDone: list.length ? list[0].done : false });
+  stars.forEach((s, i) => {
+    const line = open.find((l) => l.raw === s.text);
+    const done = line ? line.done : s.done;
     const row = el("div", "page-star-row" + (done ? " done" : ""));
     const tick = button("", "box" + (done ? " ticked" : ""), () => {
       if (line) markDone(day, line.raw, !line.done, true);
-      savePage(day, { starDone: !done });
+      save(stars.map((o, j) => (j === i ? { text: o.text, done: !done } : o)));
     });
-    tick.setAttribute("aria-label", (done ? "Untick " : "Tick ") + data.star);
-    row.append(tick, el("span", "page-star-words", lineLabel(data.star)));
-    row.append(button("Change", "quiet", () => { page.starPicking = true; drawPage(); }));
+    tick.setAttribute("aria-label", (done ? "Untick " : "Tick ") + s.text);
+    row.append(tick, el("span", "page-star-words", lineLabel(s.text)));
+    const off = button("\u00d7", "quiet", () => save(stars.filter((o, j) => j !== i)));
+    off.title = "Take it off the North Stars";
+    off.setAttribute("aria-label", "Take " + s.text + " off the North Stars");
+    row.append(off);
     card.append(row);
-    if (!done) card.append(el("p", "muted", "The one thing that matters most. Do it first."));
+  });
+  const room = stars.length < PAGE_MOST_STARS;
+  if (stars.length && !page.starPicking) {
+    if (stars.some((s) => !s.done)) card.append(el("p", "muted", "What matters most. Do these first."));
+    if (room) card.append(button("+ Add a North Star", "quiet", () => { page.starPicking = true; drawPage(); }));
     return card;
   }
-  card.append(el("p", "muted", "The one thing that would make " + (day === isoDay(new Date()) ? "today" : "this day") +
-    " a win. Pick it, then do it first."));
+  if (!room) { page.starPicking = false; return card; }
+  card.append(el("p", "muted", stars.length ? "Add another one (up to " + PAGE_MOST_STARS + ")." :
+    "The thing that would make " + (day === isoDay(new Date()) ? "today" : "this day") + " a win. Pick it, then do it first."));
+  const add = (words) => {
+    page.starPicking = false;
+    if (stars.some((s) => s.text.toLowerCase() === words.toLowerCase())) { drawPage(); return; }
+    save(stars.concat([{ text: words, done: false }]));
+  };
   const chips = el("div", "page-star-picks");
-  open.filter((l) => !l.done).slice(0, 12).forEach((l) => {
-    const chip = button(lineLabel(l.raw), "quiet", () => { page.starPicking = false; savePage(day, { star: l.raw, starDone: false }); });
+  open.filter((l) => !l.done && !stars.some((s) => s.text === l.raw)).slice(0, 12).forEach((l) => {
+    const chip = button(lineLabel(l.raw), "quiet", () => add(l.raw));
     applySubject(chip, l);
     chips.append(chip);
   });
@@ -3819,14 +3838,13 @@ function pageStarCard(day, lines, data) {
   const field = el("input");
   field.placeholder = "Or type it";
   field.setAttribute("aria-label", "North Star");
-  form.append(field, el("button", "", "Set"));
+  form.append(field, el("button", "", "Add"));
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     const words = field.value.trim();
     if (!words) return;
     if (!open.some((l) => l.raw === words)) putBack(day, words, "");
-    page.starPicking = false;
-    savePage(day, { star: words, starDone: false });
+    add(words);
   });
   card.append(form);
   if (page.starPicking) card.append(button("Cancel", "quiet", () => { page.starPicking = false; drawPage(); }));
@@ -3908,13 +3926,27 @@ function pageBlocksCard(day, lines, times, events) {
   const slots = pageSlots(col.timed);
   const nowMin = now.getHours() * 60 + now.getMinutes();
   const gaps = new Set(pageGaps(col.timed, isToday ? nowMin : 0));
+  // 2026-10-19n: once a half hour's over, what she ticked off in it shows there.
+  const did = day <= isoDay(now) ? pageDoneBySlot(state.history, day, now.getTime()) : {};
+  const over = (m) => day < isoDay(now) || (isToday && m + 30 <= nowMin);
   card.append(el("span", "page-label", "Time blocks"));
   const grid = el("div", "page-slots");
+  const early = Object.keys(did).map(Number).filter((m) => m < slots[0]).sort((x, y) => x - y);
+  if (early.length) {
+    const before = el("div", "page-did-early");
+    before.append(el("span", "page-slot-time", "Earlier"));
+    const list = el("div", "page-slot-body");
+    early.forEach((m) => did[m].forEach((t) => list.append(el("div", "page-did", "\u2713 " + lineLabel(t) + "  " + hhmm(m)))));
+    before.append(list);
+    grid.append(before);
+  }
   slots.forEach((m) => {
+    const ticked = over(m) ? (did[m] || []) : [];
     const slot = el("div", "page-slot" + (isToday && nowMin >= m && nowMin < m + 30 ? " now" : "") +
-      (gaps.has(m) ? " gap" : "") + (page.held ? " droppable" : ""));
+      (gaps.has(m) && !ticked.length ? " gap" : "") + (page.held ? " droppable" : ""));
     slot.append(el("span", "page-slot-time", hhmm(m)));
     const body = el("div", "page-slot-body");
+    ticked.forEach((t) => body.append(el("div", "page-did", "\u2713 " + lineLabel(t))));
     col.timed.filter((t) => t.start >= m && t.start < m + 30).forEach((t) => {
       if (t.kind === "event") {
         const chip = el("div", "page-block event");
@@ -3926,7 +3958,7 @@ function pageBlocksCard(day, lines, times, events) {
       const line = t.line;
       const open = page.chip === line.raw;
       const chip = el("div", "page-block" + (line.done ? " done" : "") + (open ? " open" : "") +
-        (pageOf(day).star === line.raw ? " star" : ""));
+        ((pageOf(day).stars || []).some((s) => s.text === line.raw) ? " star" : ""));   // 2026-10-19n
       applySubject(chip, line);
       chip.draggable = true;
       chip.addEventListener("dragstart", (event) => {
@@ -4022,7 +4054,7 @@ function pageTaskList(day, lines, times) {
     item.append(tick, name);
     const p = timeParts(at);
     item.append(el("span", "page-task-when", p ? hhmm(p.start) : line.done ? "" : "no time"));
-    if (pageOf(day).star === line.raw) item.append(el("span", "page-star-icon small", "★"));
+    if ((pageOf(day).stars || []).some((s) => s.text === line.raw)) item.append(el("span", "page-star-icon small", "★"));
     list.append(item);
   });
   card.append(list);
@@ -4105,7 +4137,7 @@ function drawPage() {
              button("›", "quiet page-step", () => { page.day = addDayIso(day, 1); page.held = null; page.said = ""; drawPage(); }));
   if (day !== today) bar.append(button("Today", "quiet", () => { page.day = today; drawPage(); }));
   // 2026-10-19k: split with the calendar, or pop the planner out into its own small window.
-  if (!narrow() && !isPopout()) bar.append(button(page.split ? "Just the page" : "Split with calendar", "quiet page-split",
+  if (!narrow() && !isPopout()) bar.append(button(page.split ? "Just the page" : "Split view", "quiet page-split",
     () => { page.split = !page.split; selectTab("page"); drawPage(); }));
   if (!isPopout()) bar.append(button("Pop out", "quiet page-popout", () => {
     window.open(location.pathname + "?pop=page", "tutor-day", "popup,width=440,height=800");
@@ -4275,8 +4307,11 @@ function selectTab(key, focus) {
     if (on && focus) other.focus();
   });
   // 2026-10-19k: the Day page and the calendar share the screen when split.
-  const split = key === "page" && page.split && !narrow();
-  show("pair", key === "page" || key === "calendar");
+  // 2026-10-19n: the width first, so a hiccup below can never leave the
+  // Day page squeezed into one thin column.
+  document.body.classList.toggle("wide-page", key === "calendar" || key === "page");
+  const split = key === "page" && page.split && !narrow() && Boolean($("pair"));
+  if ($("pair")) show("pair", key === "page" || key === "calendar");
   show("tab-calendar", key === "calendar" || split);
   document.body.classList.toggle("split-view", split);
   if (split) drawCalendar();
