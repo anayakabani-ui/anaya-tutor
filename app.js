@@ -37,7 +37,7 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          splitLine, parseChat, chatWaiting, APP_VERSION, nowScroll, eventAfterDrag,
          planCheck, repeatWords, subjectColour, eventColour, EVENT_COLOURS,
          pageData, pageHabits, pageSlots, pageGaps, longerBy, pageSteps, carryList, PAGE_MOST_HABITS, PAGE_HABIT_IDEAS, PAGE_MOST_STARS, pageDoneBySlot,
-         smartItems, smartPlan } from "./logic.js";   // 2026-10-19o: smart plan
+         smartItems, smartPlan, smartDefaults } from "./logic.js";   // 2026-10-19o: smart plan
 
 const $ = (id) => document.getElementById(id);
 // 2026-10-18b: a line's subject, by its words, from the bank's subject lists.
@@ -3739,6 +3739,14 @@ function drawRewards() {
 // right. Tasks, ticks and times are her real ones (the laptop's); the star,
 // habits, mood, productivity, notes and what's urgent live in pages/<day>.
 const page = { day: "", held: null, typingAt: null, chip: null, said: "", notesTimer: null, notesDirty: false };
+// 2026-10-19q: "hwo do i refresh without losnig progress?" The smart plan's answers are kept on this device.
+page.smart = (() => { const s = recall("tutor-smart", null);
+  return s && typeof s === "object" && s.answers && typeof s.answers === "object" ? { view: s.view === "plan" ? "plan" : "ask", answers: s.answers,
+    deadline: /^\d{4}-\d{2}-\d{2}$/.test(String(s.deadline || "")) ? s.deadline : smartDefaults(new Date()).deadline,
+    start: /^\d{4}-\d{2}-\d{2}$/.test(String(s.start || "")) ? s.start : smartDefaults(new Date()).start,
+    light: Array.isArray(s.light) ? s.light : smartDefaults(new Date()).light,
+    gone: s.gone && typeof s.gone === "object" ? s.gone : {}, said: "" } : null; })();
+function smartSave() { keep("tutor-smart", page.smart); }
 
 function pageDayNow() {
   const today = isoDay(new Date());
@@ -4137,12 +4145,21 @@ function smartChips(label, options, now, set) {
 function pageSmartCard(found) {
   const s = page.smart;
   const now = new Date();
-  const items = smartItems(found, state.tasks, state.exams, subjectNames(), now);
+  if (!s.gone) s.gone = {};
+  const items = smartItems(found, state.tasks, state.exams, subjectNames(), now).filter((it) => !s.gone[it.key]);   // 2026-10-19q
   const card = el("div", "page-card smart-card");
   card.append(el("span", "page-label", "Smart plan"));
   if (s.said) card.append(el("p", "page-said", s.said));
   const answer = (it) => ({ ...it, ...(s.answers[it.key] || {}) });
-  const setA = (it, patch) => { s.answers[it.key] = { ...(s.answers[it.key] || {}), ...patch }; drawPage(); };
+  const setA = (it, patch) => { s.answers[it.key] = { ...(s.answers[it.key] || {}), ...patch }; smartSave(); drawPage(); };
+  // 2026-10-19q: "no option to either do ive already done a task". Ticks it and takes it off the plan.
+  const doneAlready = (it) => {
+    s.gone[it.key] = true;
+    if (it.from === "day") markDone(it.day, it.text, true);
+    else if (it.from === "hw" && it.id) sendEdit({ kind: "tick", task: Number(it.id) });
+    s.said = "\u201c" + it.text + "\u201d is done" + (it.from === "bank" ? " (off the plan; it's still in the bank)" : ", ticked off") + ".";
+    smartSave(); drawPage();
+  };
   if (s.view === "ask") {
     card.append(el("p", "muted", "I've had a guess at each one. Fix anything that's wrong, pick your deadline, then press Make my plan."));
     const dl = el("label", "smart-deadline");
@@ -4151,9 +4168,35 @@ function pageSmartCard(found) {
     pick.type = "date";
     pick.value = s.deadline;
     pick.min = isoDay(now);
-    pick.addEventListener("change", () => { if (pick.value) s.deadline = pick.value; });
+    pick.addEventListener("change", () => { if (pick.value) { s.deadline = pick.value; smartSave(); } });
     dl.append(pick);
+    // 2026-10-19q: "or mass add the deadline".
+    dl.append(button("Use this date for all", "quiet smart-all", () => {
+      items.forEach((raw) => { const it = answer(raw); if (it.must) s.answers[it.key] = { ...(s.answers[it.key] || {}), by: s.deadline }; });
+      s.said = "Every must do is due " + dayHead(s.deadline, now) + " now.";
+      smartSave(); drawPage();
+    }));
     card.append(dl);
+    // 2026-10-19r: where it starts, and the days to go easy on.
+    const first = smartDefaults(now).start === isoDay(now) ? isoDay(now) : smartDefaults(now).start;
+    const startOpts = [[isoDay(now), "Today"], [addDayIso(isoDay(now), 1), "Tomorrow"], [addDayIso(isoDay(now), 2), "Day after"]];
+    if (!s.start) s.start = first;
+    card.append(smartChips("Start from", startOpts, s.start, (v) => { s.start = v; smartSave(); drawPage(); }));
+    const easy = el("div", "smart-q");
+    easy.append(el("span", "smart-q-label", "Go easy on"));
+    if (!Array.isArray(s.light)) s.light = [];
+    [0, 1, 2, 3].map((n) => addDayIso(s.start, n)).forEach((d) => {
+      const on = s.light.includes(d);
+      const chip = button(dayHead(d, now), "smart-chip" + (on ? " on" : ""), () => {
+        s.light = on ? s.light.filter((x) => x !== d) : s.light.concat([d]);
+        smartSave(); drawPage();
+      });
+      chip.setAttribute("aria-pressed", String(on));
+      easy.append(chip);
+    });
+    easy.append(el("span", "muted smart-q-hint", "one new thing at most"));
+    card.append(easy);
+    card.append(el("p", "muted smart-q-hint", "Nothing goes after the deadline. Anything due later is pulled in before it."));
     if (!items.length) { card.append(el("p", "muted", "Nothing to plan. Your days and the bank are empty.")); return card; }
     const list = el("div", "smart-list");
     items.forEach((raw) => {
@@ -4162,6 +4205,7 @@ function pageSmartCard(found) {
       const head = el("div", "smart-item-head");
       head.append(el("span", "smart-item-name", it.from === "hw" ? "HW: " + it.text : it.text));
       head.append(el("span", "smart-item-where", it.from === "day" ? dayHead(it.day, now) : it.from === "bank" ? "In the bank" : "Homework"));
+      head.append(button("Done already", "quiet smart-done", () => doneAlready(it)));
       row.append(head);
       row.append(smartChips("Must do?", [[true, "Yes"], [false, "No"]], it.must, (v) => setA(it, { must: v })));
       if (it.must) {
@@ -4182,15 +4226,15 @@ function pageSmartCard(found) {
     });
     card.append(list);
     const go = el("div", "smart-actions");
-    go.append(button("Make my plan", "", () => { s.view = "plan"; s.said = ""; drawPage(); }),
-              button("Close", "quiet", () => { page.smart = null; drawPage(); }));
+    go.append(button("Make my plan", "", () => { s.view = "plan"; s.said = ""; smartSave(); drawPage(); }),
+              button("Close", "quiet", () => { page.smart = null; smartSave(); drawPage(); }));
     card.append(go);
     return card;
   }
   // The plan.
-  const plan = smartPlan(items, s.answers, found, now, s.deadline);
+  const plan = smartPlan(items, s.answers, found, now, s.deadline, { start: s.start, light: s.light });   // 2026-10-19r
   if (!plan.steps.length) card.append(el("p", "muted", "Nothing's marked as a must do. Go back and pick some."));
-  if (plan.late.length) card.append(el("p", "smart-late", "Already past the date: " + plan.late.join(", ") + ". They're on today."));
+  if (plan.late.length) card.append(el("p", "smart-late", "Already past the date: " + plan.late.join(", ") + ". They're on the first day."));
   Object.keys(plan.days).sort().forEach((day) => {
     const box = el("div", "smart-day");
     box.append(el("h3", "smart-day-head", dayHead(day, now)));
@@ -4204,8 +4248,8 @@ function pageSmartCard(found) {
   });
   const go = el("div", "smart-actions");
   if (plan.changes) go.append(button("Set it up", "", () => smartApply(plan)));
-  go.append(button("Back", "quiet", () => { s.view = "ask"; drawPage(); }),
-            button("Close", "quiet", () => { page.smart = null; drawPage(); }));
+  go.append(button("Back", "quiet", () => { s.view = "ask"; smartSave(); drawPage(); }),
+            button("Close", "quiet", () => { page.smart = null; smartSave(); drawPage(); }));
   card.append(go);
   return card;
 }
@@ -4221,6 +4265,7 @@ async function smartApply(plan) {
     if (ok) sent += 1;
   }
   page.smart = null;
+  smartSave();
   page.said = sent ? "Smart plan's set up: " + sent + " " + (sent === 1 ? "change" : "changes") +
     ". The laptop takes them in a few seconds while the tutor is open." : "Couldn't send the plan. Are you online?";
   drawPage();
@@ -4302,8 +4347,9 @@ function drawPage() {
   }));
   // 2026-10-19o: smart plan.
   bar.append(button(page.smart ? "Close smart plan" : "Smart plan", "page-smart-go", () => {
-    page.smart = page.smart ? null : { view: "ask", answers: {}, deadline: addDayIso(today, 7), said: "" };
-    drawPage();
+    page.smart = page.smart ? null : { view: "ask", answers: {}, ...smartDefaults(new Date()), gone: {}, said: "" };   // 2026-10-19r
+    smartSave();
+    selectTab("page"); drawPage();
   }));
   bar.querySelectorAll(".page-step")[0].setAttribute("aria-label", "Day before");
   bar.querySelectorAll(".page-step")[1].setAttribute("aria-label", "Day after");
@@ -4474,7 +4520,7 @@ function selectTab(key, focus) {
   // 2026-10-19n: the width first, so a hiccup below can never leave the
   // Day page squeezed into one thin column.
   document.body.classList.toggle("wide-page", key === "calendar" || key === "page");
-  const split = key === "page" && page.split && !narrow() && Boolean($("pair"));
+  const split = key === "page" && page.split && !page.smart && !narrow() && Boolean($("pair"));   // 2026-10-19q: smart plan gets the whole width
   if ($("pair")) show("pair", key === "page" || key === "calendar");
   show("tab-calendar", key === "calendar" || split);
   document.body.classList.toggle("split-view", split);
