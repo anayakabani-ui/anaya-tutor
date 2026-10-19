@@ -4068,6 +4068,58 @@ function pageTaskList(day, lines, times) {
   return card;
 }
 
+// 2026-10-19o: a bank of fun things to do on a break. Her list lives in
+// pages/fun {list}; the starter ideas show until she changes it.
+const FUN_STARTERS = [
+  "Ten minutes of a dog video",
+  "Walk round the garden",
+  "Draw a Warrior Cat",
+  "Put on a song and dance to it",
+  "Make a hot chocolate",
+  "Ring Jaya",
+  "Read one page of something fun",
+  "Stretch like a cat",
+  "Count the birds you can see",
+  "Think up a new Warrior Cat name",
+];
+function funList() {
+  const f = state.pages.fun;
+  return f && Array.isArray(f.list) ? f.list : FUN_STARTERS.slice();
+}
+function saveFun(list) {
+  state.pages.fun = { list };
+  if (cloud) setDoc(doc(cloud.db, cloud.base + "pages/fun"), { list, at: isoNow(new Date()) }, { merge: true }).catch(() => {});
+  drawPage();
+}
+function pageFunCard() {
+  const list = funList();
+  const card = el("div", "page-card page-fun");
+  card.append(el("span", "page-label", "Fun stuff"));
+  card.append(el("p", "page-said", page.funPick || "Stuck for something? Press Pick one."));
+  card.append(button("Pick one", "quiet", () => {
+    if (!list.length) return;
+    page.funPick = list[Math.floor(Math.random() * list.length)];
+    drawPage();
+  }));
+  const ul = el("ul", "page-fun-list");
+  list.forEach((item, i) => {
+    const li = el("li", "page-fun-item");
+    li.append(el("span", "page-fun-words", item));
+    li.append(button("Remove", "quiet page-fun-x", () => saveFun(list.filter((_, j) => j !== i))));
+    ul.append(li);
+  });
+  card.append(ul);
+  const row = el("div", "page-inline");
+  const input = document.createElement("input");
+  input.placeholder = "Add a fun thing";
+  input.setAttribute("aria-label", "Add a fun thing");
+  const add = () => { const t = input.value.trim(); if (t) saveFun([...list, t.slice(0, 120)]); };
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") add(); });
+  row.append(input, button("Add", "quiet", add));
+  card.append(row);
+  return card;
+}
+
 function pageNotesCard(day, data) {
   const card = el("div", "page-card page-notes");
   card.append(el("span", "page-label", "Notes"));
@@ -4169,7 +4221,7 @@ function drawPage() {
   box.append(top);
   const body = el("div", "page-body");
   const right = el("div", "page-right");
-  right.append(pageTaskList(day, lines, times), pageNotesCard(day, data));
+  right.append(pageTaskList(day, lines, times), pageNotesCard(day, data), pageFunCard());   // 2026-10-19o: fun stuff bank
   const carry = pageCarryCard(day, lines, data);
   if (carry) right.append(carry);
   body.append(pageBlocksCard(day, lines, times, eventsNow(found, Date.now())), right);
