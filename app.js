@@ -32,7 +32,7 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          rewardUse, rewardPiles,
          allDays, dayKey, dayLines, dayHead, allDaysCount, settleDays,
          CAL_VIEWS, CAL_FEW, addMove, BANK, BANK_PICK, pickCount, settlePicks, withPicks, PICK_LEASTS, bankTabs, pickLine, withMoves, calendarDays,
-         HOUR_PX, CAL_LAYOUTS, clockWords, minutesOf, hhmm, dropTime, mergedTimes, timeColumn, firstScroll, scrollFloor, CAL_LOCK_HOUR, settleSwaps, swapSig, calendarStep, calendarTitle, calendarCells,
+         HOUR_PX, CAL_LAYOUTS, clockWords, minutesOf, hhmm, timeParts, timeSpan, taskLength, dropTime, mergedTimes, timeColumn, firstScroll, scrollFloor, CAL_LOCK_HOUR, settleSwaps, swapSig, calendarStep, calendarTitle, calendarCells,
          moveProblem, settleMoves, notesIncoming, noteVersion,
          splitLine, parseChat, chatWaiting, APP_VERSION, nowScroll, eventAfterDrag,
          planCheck, repeatWords, subjectColour, eventColour, EVENT_COLOURS } from "./logic.js";
@@ -641,13 +641,21 @@ function sendTime(day, text, at) {
   state.timesWaiting = state.timesWaiting.filter((t) => Date.now() - t.atMs < 120000 && t.key !== day + "|" + text);
   state.timesWaiting.push({ key: day + "|" + text, at, atMs: Date.now() });
   state.calPick = null;
-  state.calSaid = at ? "\u201c" + text + "\u201d at about " + clockWords(at) + "." : "Its time's gone.";
+  const span = timeParts(at);
+  state.calSaid = !at ? "Its time's gone." : "\u201c" + text + "\u201d at about " + clockWords(hhmm(span ? span.start : minutesOf(at))) +
+    (span && span.end !== null ? " to " + clockWords(hhmm(span.end)) : "") + ".";
   drawCalendar();
   return sendEdit({ kind: "line_time", day, text, time: at });
 }
 
 function placeAt(held, day, at) {
   if (held.from === BANK_PICK) return pickToDay(held, day, at);     // 2026-10-18f
+  // 2026-10-19: a task she'd pulled longer keeps its length when moved.
+  const had = mergedTimes(allDays(state.alldays), state.timesWaiting, Date.now())[held.from + "|" + held.text];
+  if (at && timeParts(had) && timeParts(had).end !== null) {
+    const s = minutesOf(at);
+    at = timeSpan(s, s + taskLength(had));
+  }
   if (held.from === day) return sendTime(day, held.text, at);
   return Promise.resolve(moveLine(held, day)).then((moved) => {
     if (moved) return sendTime(day, held.text, at);
@@ -1038,6 +1046,55 @@ function timesDrop(target, day, onHours) {
   }
 }
 
+// 2026-10-19: "cant extend amount of time a task holds by drag". A task's
+// bottom edge pulls longer or shorter, in quarter hours, like an event's.
+function taskPull(block, item, day) {
+  const grip = el("div", "tg-resize");
+  grip.title = "Pull to make it longer or shorter";
+  block.append(grip);
+  grip.addEventListener("mousedown", (event) => event.preventDefault());   // not a drag of the task
+  grip.addEventListener("click", (event) => event.stopPropagation());
+  grip.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    block.draggable = false;
+    const y0 = event.clientY;
+    const tall0 = parseFloat(block.style.height) || 22;
+    const step = HOUR_PX / 4;
+    let moved = false;
+    grip.setPointerCapture(event.pointerId);
+    const move = (ev) => {
+      const dy = ev.clientY - y0;
+      if (!moved && Math.abs(dy) < 4) return;
+      moved = true;
+      state.dragging = true;               // no redraw under her hand
+      block.classList.add("pulling");
+      const tall = Math.max(step - 2, tall0 + Math.round(dy / step) * step);
+      block.style.height = tall + "px";
+      const span = block.querySelector(".tg-item-time");
+      const mins = Math.max(15, Math.round((item.end - item.start + Math.round(dy / step) * 15) / 15) * 15);
+      if (span) span.textContent = clockWords(hhmm(item.start)) + " to " + clockWords(hhmm(item.start + mins));
+    };
+    const up = (ev) => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", up);
+      grip.removeEventListener("pointercancel", up);
+      block.classList.remove("pulling");
+      block.draggable = true;
+      state.dragging = false;
+      state.calStale = false;
+      if (!moved) return;
+      const quarters = Math.round((ev.clientY - y0) / step);
+      const mins = Math.max(15, item.end - item.start + quarters * 15);
+      sendTime(day, item.line.raw, timeSpan(item.start, item.start + mins));
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up);
+    grip.addEventListener("pointercancel", up);
+  });
+}
+
 function timedBlock(item, day, past) {
   const top = item.start / 60 * HOUR_PX;
   const tall = Math.max(22, (item.end - item.start) / 60 * HOUR_PX - 2);
@@ -1054,7 +1111,8 @@ function timedBlock(item, day, past) {
   block.style.height = tall + "px";
   block.style.left = "calc(" + (item.lane * width) + "% + 2px)";
   block.style.width = "calc(" + width + "% - 4px)";
-  const when = clockWords(hhmm(item.start)) + (isEvent && item.event.end ? " to " + clockWords(item.event.end) : "");
+  const when = clockWords(hhmm(item.start)) + (isEvent && item.event.end ? " to " + clockWords(item.event.end)
+    : !isEvent && item.ranged ? " to " + clockWords(hhmm(item.end)) : "");
   block.append(el("span", "tg-item-name", item.label), el("span", "tg-item-time", when));
   if (!isEvent && item.line && item.line.locked) {      // 2026-10-16e
     block.classList.add("locked");
@@ -1071,7 +1129,8 @@ function timedBlock(item, day, past) {
   const picked = state.calPick && state.calPick.text === raw && state.calPick.from === day;
   if (picked) block.classList.add("picked");
   block.draggable = true;
-  block.title = "Drag to another time or day. Drag it to the top to take its time off.";
+  block.title = "Drag to another time or day. Drag it to the top to take its time off. Pull its bottom to make it longer.";
+  taskPull(block, item, day);                // 2026-10-19
   block.addEventListener("click", () => {
     state.calPick = picked ? null : { text: raw, from: day, timed: true };
     state.calSaid = "";
