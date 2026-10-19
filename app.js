@@ -36,7 +36,8 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          moveProblem, settleMoves, notesIncoming, noteVersion,
          splitLine, parseChat, chatWaiting, APP_VERSION, nowScroll, eventAfterDrag,
          planCheck, repeatWords, subjectColour, eventColour, EVENT_COLOURS,
-         pageData, pageHabits, pageSlots, pageGaps, longerBy, pageSteps, carryList, PAGE_MOST_HABITS, PAGE_HABIT_IDEAS, PAGE_MOST_STARS, pageDoneBySlot } from "./logic.js";
+         pageData, pageHabits, pageSlots, pageGaps, longerBy, pageSteps, carryList, PAGE_MOST_HABITS, PAGE_HABIT_IDEAS, PAGE_MOST_STARS, pageDoneBySlot,
+         smartItems, smartPlan } from "./logic.js";   // 2026-10-19o: smart plan
 
 const $ = (id) => document.getElementById(id);
 // 2026-10-18b: a line's subject, by its words, from the bank's subject lists.
@@ -4120,6 +4121,111 @@ function pageFunCard() {
   return card;
 }
 
+// 2026-10-19o: smart plan. She sees her guessed answers, fixes what's
+// wrong, sets a deadline, sees the plan, then Set it up sends it all.
+function smartChips(label, options, now, set) {
+  const row = el("div", "smart-q");
+  row.append(el("span", "smart-q-label", label));
+  options.forEach(([value, words]) => {
+    const chip = button(words, "smart-chip" + (now === value ? " on" : ""), () => set(value));
+    chip.setAttribute("aria-pressed", String(now === value));
+    row.append(chip);
+  });
+  return row;
+}
+
+function pageSmartCard(found) {
+  const s = page.smart;
+  const now = new Date();
+  const items = smartItems(found, state.tasks, state.exams, subjectNames(), now);
+  const card = el("div", "page-card smart-card");
+  card.append(el("span", "page-label", "Smart plan"));
+  if (s.said) card.append(el("p", "page-said", s.said));
+  const answer = (it) => ({ ...it, ...(s.answers[it.key] || {}) });
+  const setA = (it, patch) => { s.answers[it.key] = { ...(s.answers[it.key] || {}), ...patch }; drawPage(); };
+  if (s.view === "ask") {
+    card.append(el("p", "muted", "I've had a guess at each one. Fix anything that's wrong, pick your deadline, then press Make my plan."));
+    const dl = el("label", "smart-deadline");
+    dl.append(el("span", "", "Deadline for everything "));
+    const pick = document.createElement("input");
+    pick.type = "date";
+    pick.value = s.deadline;
+    pick.min = isoDay(now);
+    pick.addEventListener("change", () => { if (pick.value) s.deadline = pick.value; });
+    dl.append(pick);
+    card.append(dl);
+    if (!items.length) { card.append(el("p", "muted", "Nothing to plan. Your days and the bank are empty.")); return card; }
+    const list = el("div", "smart-list");
+    items.forEach((raw) => {
+      const it = answer(raw);
+      const row = el("div", "smart-item" + (it.must ? " must" : ""));
+      const head = el("div", "smart-item-head");
+      head.append(el("span", "smart-item-name", it.from === "hw" ? "HW: " + it.text : it.text));
+      head.append(el("span", "smart-item-where", it.from === "day" ? dayHead(it.day, now) : it.from === "bank" ? "In the bank" : "Homework"));
+      row.append(head);
+      row.append(smartChips("Must do?", [[true, "Yes"], [false, "No"]], it.must, (v) => setA(it, { must: v })));
+      if (it.must) {
+        row.append(smartChips("What is it?", [["hw", "Homework"], ["test", "Test"], ["other", "Other"]], it.kind, (v) => setA(it, { kind: v })));
+        if (it.kind === "test") {
+          row.append(smartChips("Confident?", [["yes", "Yes"], ["kinda", "Kinda"], ["no", "No"]], it.confident, (v) => setA(it, { confident: v })));
+        }
+        const by = el("label", "smart-q");
+        by.append(el("span", "smart-q-label", it.kind === "test" ? "Test day" : "Due"));
+        const d = document.createElement("input");
+        d.type = "date";
+        d.value = it.by || "";
+        d.addEventListener("change", () => setA(it, { by: d.value }));
+        by.append(d, el("span", "muted smart-q-hint", it.by ? "" : "blank = the deadline"));
+        row.append(by);
+      }
+      list.append(row);
+    });
+    card.append(list);
+    const go = el("div", "smart-actions");
+    go.append(button("Make my plan", "", () => { s.view = "plan"; s.said = ""; drawPage(); }),
+              button("Close", "quiet", () => { page.smart = null; drawPage(); }));
+    card.append(go);
+    return card;
+  }
+  // The plan.
+  const plan = smartPlan(items, s.answers, found, now, s.deadline);
+  if (!plan.steps.length) card.append(el("p", "muted", "Nothing's marked as a must do. Go back and pick some."));
+  if (plan.late.length) card.append(el("p", "smart-late", "Already past the date: " + plan.late.join(", ") + ". They're on today."));
+  Object.keys(plan.days).sort().forEach((day) => {
+    const box = el("div", "smart-day");
+    box.append(el("h3", "smart-day-head", dayHead(day, now)));
+    plan.days[day].forEach((st) => {
+      const line = el("div", "smart-step " + st.act);
+      line.append(el("span", "smart-step-tag", st.act === "add" ? "New" : st.act === "move" ? "Moved here" : "Already here"),
+                  el("span", "smart-step-text", st.text));
+      box.append(line);
+    });
+    card.append(box);
+  });
+  const go = el("div", "smart-actions");
+  if (plan.changes) go.append(button("Set it up", "", () => smartApply(plan)));
+  go.append(button("Back", "quiet", () => { s.view = "ask"; drawPage(); }),
+            button("Close", "quiet", () => { page.smart = null; drawPage(); }));
+  card.append(go);
+  return card;
+}
+
+async function smartApply(plan) {
+  let sent = 0;
+  for (const st of plan.steps) {
+    if (st.act === "keep") continue;
+    let ok = false;
+    if (st.act === "add") ok = await sendEdit({ kind: "day_add", day: st.day, text: st.text });
+    else if (st.from === "bank") ok = await (st.pick ? pickToDay({ text: st.text, from: BANK_PICK }, st.day) : moveLine({ text: st.text, from: BANK }, st.day));
+    else ok = await moveLine({ text: st.text, from: st.from }, st.day);
+    if (ok) sent += 1;
+  }
+  page.smart = null;
+  page.said = sent ? "Smart plan's set up: " + sent + " " + (sent === 1 ? "change" : "changes") +
+    ". The laptop takes them in a few seconds while the tutor is open." : "Couldn't send the plan. Are you online?";
+  drawPage();
+}
+
 function pageNotesCard(day, data) {
   const card = el("div", "page-card page-notes");
   card.append(el("span", "page-label", "Notes"));
@@ -4194,10 +4300,16 @@ function drawPage() {
   if (!isPopout()) bar.append(button("Pop out", "quiet page-popout", () => {
     window.open(location.pathname + "?pop=page", "tutor-day", "popup,width=440,height=800");
   }));
+  // 2026-10-19o: smart plan.
+  bar.append(button(page.smart ? "Close smart plan" : "Smart plan", "page-smart-go", () => {
+    page.smart = page.smart ? null : { view: "ask", answers: {}, deadline: addDayIso(today, 7), said: "" };
+    drawPage();
+  }));
   bar.querySelectorAll(".page-step")[0].setAttribute("aria-label", "Day before");
   bar.querySelectorAll(".page-step")[1].setAttribute("aria-label", "Day after");
   box.append(bar);
   if (!found) { box.append(el("p", "muted", "Waiting for the laptop. Open the tutor and your days show up here.")); return; }
+  if (page.smart) { box.append(pageSmartCard(found)); return; }   // 2026-10-19o
   const lines = pageLines(day);
   const times = pageTimes();
   const data = pageOf(day);
