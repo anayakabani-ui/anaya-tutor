@@ -1226,7 +1226,8 @@ export const TOP_TABS = [["today", "Today"], ["tasks", "Tasks"], ["rewards", "Re
 // notes as the tutor's Notes tab) are down the side, in a group of their own.
 export const TAB_GROUPS = [
   // 2026-10-17: "have the chat like tutor on my laptop", through the laptop.
-  { name: "Plan", tabs: [["talk", "Tutor chat"], ["calendar", "Calendar"], ["notes", "Notes"]] },
+  // 2026-10-19i: the Day page, her "Power Page", first.
+  { name: "Plan", tabs: [["page", "Day page"], ["talk", "Tutor chat"], ["calendar", "Calendar"], ["notes", "Notes"]] },
   { name: "School", tabs: [["school", "School"], ["lessons", "Review"], ["subjects", "Subjects"]] },
   { name: "More", tabs: [["youtube", "YouTube"]] },
 ];
@@ -1519,7 +1520,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v56";
+export const APP_VERSION = "v57";
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -2027,4 +2028,90 @@ export function notesIncoming(box, snap, nowMs) {
   if (theirs === box.text) return { set: false, text: theirs, base: version, sent, words: "Saved on the laptop." };
   return { set: true, text: theirs, base: version, sent,
            words: box.sent ? "The laptop had other notes too, so both are kept." : "Saved on the laptop." };
+}
+
+// ---- 2026-10-19i: the Day page ("Power Page"). One page a day like her
+// notebook: the North Star (the one thing, done first), a few habits and
+// mood / productivity, time blocks every half hour, the day's tasks, notes
+// and what carries over. Kept in pages/<day>; habits in pages/setup.
+export const PAGE_FROM_HOUR = 7;
+export const PAGE_TO_HOUR = 23;
+export const PAGE_MOST_HABITS = 5;
+export const PAGE_HABIT_IDEAS = ["Read 20 pages", "Exercise", "Outside 20 mins", "Water", "No phone in bed"];
+
+export function pageData(raw) {
+  const d = raw && typeof raw === "object" ? raw : {};
+  const habits = {};
+  if (d.habits && typeof d.habits === "object") {
+    Object.keys(d.habits).forEach((k) => { if (d.habits[k]) habits[k] = true; });
+  }
+  const dots = (n) => Math.max(0, Math.min(5, Math.round(Number(n) || 0)));
+  return { star: String(d.star || "").trim(), starDone: Boolean(d.starDone), habits,
+           mood: dots(d.mood), prod: dots(d.prod), notes: String(d.notes || ""),
+           urgent: Array.isArray(d.urgent) ? d.urgent.map(String) : [] };
+}
+
+export function pageHabits(raw) {
+  const list = raw && Array.isArray(raw.habits) ? raw.habits : [];
+  const seen = new Set();
+  return list.map((h) => String(h || "").trim()).filter((h) => {
+    const k = h.toLowerCase();
+    if (!h || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  }).slice(0, PAGE_MOST_HABITS);
+}
+
+// The half hours down the side: 7:00 to 23:00, wider if something's outside.
+export function pageSlots(timed) {
+  let from = PAGE_FROM_HOUR * 60, to = PAGE_TO_HOUR * 60;
+  (timed || []).forEach((t) => {
+    from = Math.min(from, Math.floor(t.start / 30) * 30);
+    to = Math.max(to, Math.ceil(t.end / 30) * 30 - 30);
+  });
+  const out = [];
+  for (let m = from; m <= Math.min(to, 23 * 60 + 30); m += 30) out.push(m);
+  return out;
+}
+
+// "Don't leave gaps": empty half hours between the first block and the last.
+export function pageGaps(timed, fromMinute) {
+  const items = (timed || []).filter((t) => t.end > (fromMinute || 0));
+  if (items.length < 2) return [];
+  const first = Math.max(fromMinute || 0, Math.min(...items.map((t) => t.start)));
+  const last = Math.max(...items.map((t) => t.end));
+  const gaps = [];
+  for (let m = Math.ceil(first / 30) * 30; m + 30 <= last; m += 30) {
+    if (!items.some((t) => t.start < m + 30 && t.end > m)) gaps.push(m);
+  }
+  return gaps;
+}
+
+// "Be realistic": a quarter more time, to the quarter hour.
+export function longerBy(at, share) {
+  const p = timeParts(at);
+  if (!p) return "";
+  const len = p.end !== null ? p.end - p.start : 30;
+  const more = Math.max(15, Math.round(len * (share || 0.25) / 15) * 15);
+  return timeSpan(p.start, p.start + len + more);
+}
+
+// The night before: dump the tasks, give them times, pick the North Star.
+export function pageSteps(lines, day, times, star) {
+  const open = (lines || []).filter((l) => l.kind === "line" && !l.done && !l.repeat);
+  const timed = open.filter((l) => timeParts((times || {})[day + "|" + l.raw]));
+  return [
+    { key: "dump", words: "Brain dump the tasks", done: open.length > 0 },
+    { key: "times", words: "Give each one a time", done: open.length > 0 && timed.length === open.length,
+      left: open.length - timed.length },
+    { key: "star", words: "Pick your North Star", done: Boolean(star) },
+  ];
+}
+
+// What's left over, the urgent ones first.
+export function carryList(lines, urgent) {
+  const hot = new Set((urgent || []).map((u) => String(u)));
+  const open = (lines || []).filter((l) => l.kind === "line" && !l.done && !l.repeat);
+  return open.filter((l) => hot.has(l.raw)).concat(open.filter((l) => !hot.has(l.raw)))
+    .map((l) => ({ ...l, urgent: hot.has(l.raw) }));
 }
