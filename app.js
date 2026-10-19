@@ -35,7 +35,8 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          HOUR_PX, ZOOMS, setHourPx, timeSnap, pickName, CAL_LAYOUTS, clockWords, minutesOf, hhmm, timeParts, timeSpan, taskLength, lineLabel, boxHits, shiftTimes, dropTime, mergedTimes, timeColumn, firstScroll, scrollFloor, CAL_LOCK_HOUR, settleSwaps, swapSig, calendarStep, calendarTitle, calendarCells,
          moveProblem, settleMoves, notesIncoming, noteVersion,
          splitLine, parseChat, chatWaiting, APP_VERSION, nowScroll, eventAfterDrag,
-         planCheck, repeatWords, subjectColour, eventColour, EVENT_COLOURS } from "./logic.js";
+         planCheck, repeatWords, subjectColour, eventColour, EVENT_COLOURS,
+         pageData, pageHabits, pageSlots, pageGaps, longerBy, pageSteps, carryList, PAGE_MOST_HABITS, PAGE_HABIT_IDEAS } from "./logic.js";
 
 const $ = (id) => document.getElementById(id);
 // 2026-10-18b: a line's subject, by its words, from the bank's subject lists.
@@ -120,7 +121,8 @@ const state = { tasks: [], exams: [], timetable: [], visits: [], day: null, meta
                 // (id -> {day, title, start, end, atMs}); the one being
                 // renamed; tasks typed onto a day or into the bank.
                 eventsEdited: new Map(), calRename: "", calAdding: "", addsWaiting: [],
-                goalsWaiting: new Map() };   // 2026-10-18: list -> {count, by, atMs}
+                goalsWaiting: new Map(),
+                pages: {} };            // 2026-10-19i: the Day page, pages/<day>   // 2026-10-18: list -> {count, by, atMs}
 let cloud = null;                     // {db, base} once she's signed in
 
 // An edit for the laptop to make. It lands in `edits`, the laptop takes it
@@ -492,6 +494,25 @@ function drawToday() {
   const box = $("tab-today");
   box.replaceChildren();
   box.append(ringCard(), dayCard());
+  // 2026-10-19i: today's North Star, off the Day page.
+  const star = pageData(state.pages[isoDay(new Date())]).star;
+  if (star) {
+    const go = button("", "today-star", () => {
+      page.day = isoDay(new Date());
+      const tab = document.querySelector('button[data-tab="page"]');
+      if (tab) tab.click();
+    });
+    go.append(el("span", "page-star-icon small", "\u2605"), el("span", "grow", "North Star: " + lineLabel(star)));
+    box.append(go);
+  } else {
+    const go = button("", "today-star none", () => {
+      page.day = isoDay(new Date());
+      const tab = document.querySelector('button[data-tab="page"]');
+      if (tab) tab.click();
+    });
+    go.append(el("span", "page-star-icon small", "\u2606"), el("span", "grow", "Plan your day: pick a North Star"));
+    box.append(go);
+  }
   settle();
   const all = todayLines(state.day && state.day.lines, state.pendingToday);
   box.append(viewChips(all, drawToday));
@@ -3677,10 +3698,423 @@ function drawRewards() {
   if (piles.used.length) pile("Used", piles.used, true);
 }
 
+// ------------------------------------------------------------ 2026-10-19i
+// The Day page, her "Power Page": "ok incorperate this to the website ...
+// somehow". Like her notebook page: the North Star at the top, habits and
+// mood, the half hours down the left, Tasks / Notes / Carry over on the
+// right. Tasks, ticks and times are her real ones (the laptop's); the star,
+// habits, mood, productivity, notes and what's urgent live in pages/<day>.
+const page = { day: "", held: null, typingAt: null, chip: null, said: "", notesTimer: null, notesDirty: false };
+
+function pageDayNow() {
+  const today = isoDay(new Date());
+  if (!page.day) page.day = new Date().getHours() >= 19 ? addDayIso(today, 1) : today;
+  return page.day;
+}
+function addDayIso(day, by) {
+  const d = new Date(day + "T12:00:00");
+  d.setDate(d.getDate() + by);
+  return isoDay(d);
+}
+function pageOf(day) { return pageData(state.pages[day]); }
+function savePage(day, patch) {
+  state.pages[day] = { ...(state.pages[day] || {}), ...patch };
+  drawPage();
+  if (!cloud) return Promise.resolve(false);
+  return setDoc(doc(cloud.db, cloud.base + "pages/" + day), { ...patch, at: isoNow(new Date()) }, { merge: true })
+    .then(() => true).catch(() => { page.said = "Couldn't save that. Are you online?"; drawPage(); return false; });
+}
+function pageLines(day) {
+  const found = allDays(state.alldays);
+  if (!found) return [];
+  return calendarCells([day], found, state.moves, state.exams, state.tasks, new Date(), 0,
+                       state.swaps, locksNow(found), state.pendingDays)[0].lines;
+}
+function pageTimes() { return mergedTimes(allDays(state.alldays), state.timesWaiting, Date.now()); }
+function pageHold(line) {
+  page.held = page.held && page.held.raw === line.raw ? null : { raw: line.raw, day: page.day };
+  page.said = page.held ? "Now press a time on the left for “" + lineLabel(line.raw) + "”." : "";
+  drawPage();
+}
+function pagePlace(raw, minute) {
+  const day = page.day;
+  page.held = null; page.chip = null;
+  page.said = "“" + lineLabel(raw) + "” at " + clockWords(hhmm(minute)) + ".";
+  Promise.resolve(placeAt({ text: raw, from: day }, day, hhmm(minute))).then(drawPage);
+  drawPage();
+}
+function pageAddAt(text, minute) {
+  const words = String(text || "").trim();
+  if (!words) return;
+  putBack(page.day, words, minute === null ? "" : hhmm(minute));
+  page.said = "Added “" + words + "”" + (minute === null ? "." : " at " + clockWords(hhmm(minute)) + ".") +
+    " It shows once the laptop has it.";
+  page.typingAt = null;
+  drawPage();
+}
+
+function pageStarCard(day, lines, data) {
+  const card = el("div", "page-card page-star");
+  const head = el("div", "page-star-head");
+  head.append(el("span", "page-star-icon", "★"), el("span", "page-label", "North Star"));
+  card.append(head);
+  const open = lines.filter((l) => l.kind === "line" && !l.repeat);
+  if (data.star && !page.starPicking) {
+    const line = open.find((l) => l.raw === data.star);
+    const done = line ? line.done : data.starDone;
+    const row = el("div", "page-star-row" + (done ? " done" : ""));
+    const tick = button("", "box" + (done ? " ticked" : ""), () => {
+      if (line) markDone(day, line.raw, !line.done, true);
+      savePage(day, { starDone: !done });
+    });
+    tick.setAttribute("aria-label", (done ? "Untick " : "Tick ") + data.star);
+    row.append(tick, el("span", "page-star-words", lineLabel(data.star)));
+    row.append(button("Change", "quiet", () => { page.starPicking = true; drawPage(); }));
+    card.append(row);
+    if (!done) card.append(el("p", "muted", "The one thing that matters most. Do it first."));
+    return card;
+  }
+  card.append(el("p", "muted", "The one thing that would make " + (day === isoDay(new Date()) ? "today" : "this day") +
+    " a win. Pick it, then do it first."));
+  const chips = el("div", "page-star-picks");
+  open.filter((l) => !l.done).slice(0, 12).forEach((l) => {
+    const chip = button(lineLabel(l.raw), "quiet", () => { page.starPicking = false; savePage(day, { star: l.raw, starDone: false }); });
+    applySubject(chip, l);
+    chips.append(chip);
+  });
+  card.append(chips);
+  const form = el("form", "page-inline");
+  const field = el("input");
+  field.placeholder = "Or type it";
+  field.setAttribute("aria-label", "North Star");
+  form.append(field, el("button", "", "Set"));
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const words = field.value.trim();
+    if (!words) return;
+    if (!open.some((l) => l.raw === words)) putBack(day, words, "");
+    page.starPicking = false;
+    savePage(day, { star: words, starDone: false });
+  });
+  card.append(form);
+  if (page.starPicking) card.append(button("Cancel", "quiet", () => { page.starPicking = false; drawPage(); }));
+  return card;
+}
+
+function dotsRow(label, value, onPick) {
+  const row = el("div", "page-dots");
+  row.append(el("span", "page-dots-label", label));
+  const group = el("div", "page-dots-set");
+  group.setAttribute("role", "radiogroup");
+  group.setAttribute("aria-label", label);
+  for (let n = 1; n <= 5; n += 1) {
+    const dot = button("", "page-dot" + (n <= value ? " on" : ""), () => onPick(n === value ? 0 : n));
+    dot.setAttribute("role", "radio");
+    dot.setAttribute("aria-checked", String(n === value));
+    dot.setAttribute("aria-label", label + " " + n + " of 5");
+    group.append(dot);
+  }
+  row.append(group);
+  return row;
+}
+
+function pageTrackCard(day, data) {
+  const card = el("div", "page-card page-track");
+  card.append(el("span", "page-label", "Tracking"));
+  const habits = pageHabits(state.pages.setup);
+  const list = el("div", "page-habits");
+  habits.forEach((h) => {
+    const on = Boolean(data.habits[h]);
+    const item = button("", "page-habit" + (on ? " on" : ""), () => savePage(day, { habits: { ...data.habits, [h]: !on } }));
+    item.append(el("span", "box" + (on ? " ticked" : "")), el("span", "", h));
+    item.setAttribute("aria-pressed", String(on));
+    list.append(item);
+  });
+  if (page.editHabits) {
+    const form = el("form", "page-inline");
+    const field = el("input");
+    field.placeholder = "A habit (keep it small)";
+    form.append(field, el("button", "", "Add"));
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const words = field.value.trim();
+      if (!words || habits.length >= PAGE_MOST_HABITS) return;
+      saveHabits(habits.concat([words]));
+    });
+    const edit = el("div", "page-habit-edit");
+    habits.forEach((h) => edit.append(button(h + " ×", "quiet", () => saveHabits(habits.filter((x) => x !== h)))));
+    if (habits.length < PAGE_MOST_HABITS) {
+      PAGE_HABIT_IDEAS.filter((i) => !habits.includes(i)).slice(0, 3)
+        .forEach((i) => edit.append(button("+ " + i, "quiet", () => saveHabits(habits.concat([i])))));
+    }
+    card.append(edit);
+    if (habits.length < PAGE_MOST_HABITS) card.append(form);
+    else card.append(el("p", "muted", PAGE_MOST_HABITS + " is plenty. Fewer is easier to keep."));
+    card.append(button("Done", "quiet", () => { page.editHabits = false; drawPage(); }));
+  } else {
+    if (!habits.length) list.append(el("span", "muted", "No habits yet."));
+    list.append(button(habits.length ? "Edit" : "Pick a few", "quiet page-habit-change",
+      () => { page.editHabits = true; drawPage(); }));
+  }
+  card.append(list);
+  card.append(dotsRow("Mood", data.mood, (n) => savePage(day, { mood: n })),
+              dotsRow("Productivity", data.prod, (n) => savePage(day, { prod: n })));
+  return card;
+}
+function saveHabits(list) {
+  state.pages.setup = { habits: list };
+  drawPage();
+  if (cloud) setDoc(doc(cloud.db, cloud.base + "pages/setup"), { habits: list, at: isoNow(new Date()) }, { merge: true })
+    .catch(() => { page.said = "Couldn't save that. Are you online?"; drawPage(); });
+}
+
+function pageBlocksCard(day, lines, times, events) {
+  const card = el("div", "page-card page-blocks");
+  const now = new Date();
+  const isToday = day === isoDay(now);
+  const col = timeColumn(lines.filter((l) => !l.repeat), day, times, events);
+  const slots = pageSlots(col.timed);
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const gaps = new Set(pageGaps(col.timed, isToday ? nowMin : 0));
+  card.append(el("span", "page-label", "Time blocks"));
+  const grid = el("div", "page-slots");
+  slots.forEach((m) => {
+    const slot = el("div", "page-slot" + (isToday && nowMin >= m && nowMin < m + 30 ? " now" : "") +
+      (gaps.has(m) ? " gap" : "") + (page.held ? " droppable" : ""));
+    slot.append(el("span", "page-slot-time", hhmm(m)));
+    const body = el("div", "page-slot-body");
+    col.timed.filter((t) => t.start >= m && t.start < m + 30).forEach((t) => {
+      if (t.kind === "event") {
+        const chip = el("div", "page-block event");
+        if (t.event.color) chip.style.setProperty("--subj", t.event.color);
+        chip.append(el("span", "grow", t.label), el("span", "page-block-when", hhmm(t.start) + "–" + hhmm(t.end)));
+        body.append(chip);
+        return;
+      }
+      const line = t.line;
+      const open = page.chip === line.raw;
+      const chip = el("div", "page-block" + (line.done ? " done" : "") + (open ? " open" : "") +
+        (pageOf(day).star === line.raw ? " star" : ""));
+      applySubject(chip, line);
+      chip.draggable = true;
+      chip.addEventListener("dragstart", (event) => {
+        event.dataTransfer.setData("text/plain", line.raw);
+        event.dataTransfer.effectAllowed = "move";
+      });
+      const tick = button("", "box" + (line.done ? " ticked" : ""), (event) => {
+        event.stopPropagation();
+        markDone(day, line.raw, !line.done, true);
+        drawPage();
+      });
+      tick.setAttribute("aria-label", (line.done ? "Untick " : "Tick ") + line.raw);
+      const name = button(lineLabel(line.raw), "page-block-name", (event) => {
+        event.stopPropagation();
+        page.chip = open ? null : line.raw;
+        drawPage();
+      });
+      chip.append(tick, name, el("span", "page-block-when", hhmm(t.start) + "–" + hhmm(t.end)));
+      body.append(chip);
+      if (open) {
+        const tools = el("div", "page-block-tools");
+        const at = times[day + "|" + line.raw];
+        tools.append(
+          button("+25% time", "quiet", () => { page.chip = null; sendTime(day, line.raw, longerBy(at, 0.25)); drawPage(); }),
+          button("Move", "quiet", () => { page.chip = null; pageHold(line); }),
+          button("Take its time off", "quiet", () => { page.chip = null; sendTime(day, line.raw, ""); drawPage(); }));
+        body.append(tools);
+      }
+    });
+    // A block that started earlier and is still going: a thin bar with its name.
+    col.timed.filter((t) => t.start < m && t.end > m).forEach((t) => {
+      const cont = el("div", "page-cont", "\u2502 " + (t.kind === "event" ? t.label : lineLabel(t.line.raw)));
+      if (t.kind === "line") applySubject(cont, t.line);
+      body.append(cont);
+    });
+    if (page.typingAt === m) {
+      const form = el("form", "page-inline");
+      const field = el("input");
+      field.placeholder = "What at " + clockWords(hhmm(m)) + "?";
+      form.append(field, el("button", "", "Add"));
+      form.addEventListener("submit", (event) => { event.preventDefault(); pageAddAt(field.value, m); });
+      field.addEventListener("keydown", (event) => { if (event.key === "Escape") { page.typingAt = null; drawPage(); } });
+      body.append(form);
+      setTimeout(() => field.focus(), 0);
+    }
+    slot.append(body);
+    slot.addEventListener("click", (event) => {
+      if (event.target.closest(".page-block, .page-block-tools, form")) return;
+      if (page.held) { pagePlace(page.held.raw, m); return; }
+      page.chip = null;
+      page.typingAt = page.typingAt === m ? null : m;
+      drawPage();
+    });
+    slot.addEventListener("dragover", (event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; slot.classList.add("over"); });
+    slot.addEventListener("dragleave", () => slot.classList.remove("over"));
+    slot.addEventListener("drop", (event) => {
+      event.preventDefault();
+      const raw = event.dataTransfer.getData("text/plain");
+      if (raw) pagePlace(raw, m);
+    });
+    grid.append(slot);
+  });
+  card.append(grid);
+  const left = col.timed.filter((t) => t.kind === "line").length;
+  const tips = [];
+  if (gaps.size) tips.push(gaps.size === 1 ? "One empty half hour in there. Put something fun or something to learn in it, so scrolling doesn't fill it."
+    : gaps.size + " empty half hours between blocks. Fill them with something fun or something to learn, so scrolling doesn't.");
+  if (left) tips.push("Not sure how long something takes? Press it and give it 25% more.");
+  else tips.push("Press a half hour to write something in, or drag a task here from Tasks.");
+  tips.forEach((t) => card.append(el("p", "muted page-tip", t)));
+  return card;
+}
+
+function pageTaskList(day, lines, times) {
+  const card = el("div", "page-card page-tasks");
+  card.append(el("span", "page-label", "Tasks"));
+  const list = el("div", "page-task-list");
+  const shown = lines.filter((l) => l.kind === "line" && !l.repeat);
+  if (!shown.length) list.append(el("p", "muted", "Nothing here yet. Brain dump everything below."));
+  shown.slice().sort((a, b) => Number(a.done) - Number(b.done)).forEach((line) => {
+    const at = times[day + "|" + line.raw];
+    const held = page.held && page.held.raw === line.raw;
+    const item = el("div", "page-task" + (line.done ? " done" : "") + (held ? " held" : "") + (line.sub ? " sub" : ""));
+    applySubject(item, line);
+    item.draggable = !line.done;
+    item.addEventListener("dragstart", (event) => {
+      event.dataTransfer.setData("text/plain", line.raw);
+      event.dataTransfer.effectAllowed = "move";
+    });
+    const tick = button("", "box" + (line.done ? " ticked" : ""), () => { markDone(day, line.raw, !line.done, true); drawPage(); });
+    tick.setAttribute("aria-label", (line.done ? "Untick " : "Tick ") + line.raw);
+    const name = button(lineLabel(line.text), "page-task-name", () => { if (!line.done) pageHold(line); });
+    item.append(tick, name);
+    const p = timeParts(at);
+    item.append(el("span", "page-task-when", p ? hhmm(p.start) : line.done ? "" : "no time"));
+    if (pageOf(day).star === line.raw) item.append(el("span", "page-star-icon small", "★"));
+    list.append(item);
+  });
+  card.append(list);
+  const form = el("form", "page-inline");
+  const field = el("input");
+  field.placeholder = "Add a task";
+  field.setAttribute("aria-label", "Add a task to this day");
+  form.append(field, el("button", "", "Add"));
+  form.addEventListener("submit", (event) => { event.preventDefault(); pageAddAt(field.value, null); });
+  card.append(form);
+  return card;
+}
+
+function pageNotesCard(day, data) {
+  const card = el("div", "page-card page-notes");
+  card.append(el("span", "page-label", "Notes"));
+  const box = el("textarea", "page-notes-box");
+  box.placeholder = "How it went, what you thought about, what you got curious about.";
+  box.value = data.notes;
+  box.setAttribute("aria-label", "Notes for this day");
+  box.addEventListener("input", () => {
+    page.notesDirty = true;
+    clearTimeout(page.notesTimer);
+    page.notesTimer = setTimeout(() => {
+      page.notesDirty = false;
+      state.pages[day] = { ...(state.pages[day] || {}), notes: box.value };
+      if (cloud) setDoc(doc(cloud.db, cloud.base + "pages/" + day), { notes: box.value, at: isoNow(new Date()) }, { merge: true }).catch(() => {});
+    }, 800);
+  });
+  card.append(box);
+  return card;
+}
+
+function pageCarryCard(day, lines, data) {
+  const today = isoDay(new Date());
+  const evening = new Date().getHours() >= 18;
+  if (!(day < today || (day === today && evening))) return null;
+  const left = carryList(lines, data.urgent);
+  const card = el("div", "page-card page-carry");
+  card.append(el("span", "page-label", "Carry over"));
+  if (!left.length) { card.append(el("p", "muted", "Nothing left. Everything got done.")); return card; }
+  const next = day < today ? today : addDayIso(day, 1);
+  const where = next === today ? "today" : "tomorrow";
+  card.append(el("p", "muted", "Mark what's urgent (!) so it goes first, then move it to " + where + "."));
+  left.forEach((line) => {
+    const item = el("div", "page-task" + (line.urgent ? " urgent" : ""));
+    applySubject(item, line);
+    const hot = button("!", "page-urgent" + (line.urgent ? " on" : ""), () => {
+      const urgent = line.urgent ? data.urgent.filter((u) => u !== line.raw) : data.urgent.concat([line.raw]);
+      savePage(day, { urgent });
+    });
+    hot.setAttribute("aria-pressed", String(line.urgent));
+    hot.setAttribute("aria-label", "Urgent");
+    item.append(hot, el("span", "page-task-name", lineLabel(line.text)),
+      button("To " + where, "quiet", () => { moveLine({ text: line.raw, from: day }, next); drawPage(); }));
+    card.append(item);
+  });
+  card.append(button("Move them all to " + where, "", () => {
+    left.forEach((line) => moveLine({ text: line.raw, from: day }, next));
+    page.said = left.length + " moved to " + where + ", urgent ones first.";
+    drawPage();
+  }));
+  return card;
+}
+
+function drawPage() {
+  const box = $("tab-page");
+  if (!box) return;
+  if (page.notesDirty && box.contains(document.activeElement) &&
+      document.activeElement.classList.contains("page-notes-box")) return;   // she's writing
+  const keepFocus = document.activeElement && box.contains(document.activeElement) && document.activeElement.tagName === "INPUT"
+    ? { value: document.activeElement.value, ph: document.activeElement.placeholder } : null;
+  const day = pageDayNow();
+  const today = isoDay(new Date());
+  const found = allDays(state.alldays);
+  box.replaceChildren();
+  const bar = el("div", "page-bar");
+  bar.append(button("‹", "quiet page-step", () => { page.day = addDayIso(day, -1); page.held = null; page.said = ""; drawPage(); }),
+             el("h2", "page-date", dayHead(day, new Date())),
+             button("›", "quiet page-step", () => { page.day = addDayIso(day, 1); page.held = null; page.said = ""; drawPage(); }));
+  if (day !== today) bar.append(button("Today", "quiet", () => { page.day = today; drawPage(); }));
+  bar.querySelectorAll(".page-step")[0].setAttribute("aria-label", "Day before");
+  bar.querySelectorAll(".page-step")[1].setAttribute("aria-label", "Day after");
+  box.append(bar);
+  if (!found) { box.append(el("p", "muted", "Waiting for the laptop. Open the tutor and your days show up here.")); return; }
+  const lines = pageLines(day);
+  const times = pageTimes();
+  const data = pageOf(day);
+  // The night before: plan tomorrow, three steps.
+  const tomorrow = addDayIso(today, 1);
+  if (day === tomorrow) {
+    const steps = pageSteps(lines, day, times, data.star);
+    if (steps.some((s) => !s.done)) {
+      const plan = el("div", "page-card page-plan");
+      plan.append(el("span", "page-label", "Plan tomorrow tonight"));
+      steps.forEach((s, i) => plan.append(el("div", "page-step-row" + (s.done ? " done" : ""),
+        (s.done ? "✓ " : (i + 1) + ". ") + s.words + (s.key === "times" && !s.done && s.left ? " (" + s.left + " to go)" : ""))));
+      box.append(plan);
+    }
+  } else if (day === today && new Date().getHours() >= 19) {
+    box.append(button("Plan tomorrow", "page-plan-go", () => { page.day = tomorrow; drawPage(); }));
+  }
+  if (page.said) box.append(el("p", "page-said", page.said));
+  const top = el("div", "page-top");
+  top.append(pageStarCard(day, lines, data), pageTrackCard(day, data));
+  box.append(top);
+  const body = el("div", "page-body");
+  const right = el("div", "page-right");
+  right.append(pageTaskList(day, lines, times), pageNotesCard(day, data));
+  const carry = pageCarryCard(day, lines, data);
+  if (carry) right.append(carry);
+  body.append(pageBlocksCard(day, lines, times, eventsNow(found, Date.now())), right);
+  box.append(body);
+  if (keepFocus) {
+    const again = [...box.querySelectorAll("input")].find((i) => i.placeholder === keepFocus.ph);
+    if (again) { again.value = keepFocus.value; again.focus(); }
+  }
+}
+
 function drawAll() {
   drawRewards();
   drawLessons();
   drawToday(); drawSubjects(); drawSchool();
+  drawPage();                           // 2026-10-19i
   drawTasks();                          // the text box itself is never rebuilt
   drawCalendarSoft(); drawNotes();      // 2026-10-10q; 2026-10-18 soft
   drawTalk();                           // 2026-10-17
@@ -3803,7 +4237,7 @@ function selectTab(key, focus) {
   $("page-name").textContent = name;
   show("page-name", !tabOnTop(key));
   // 2026-10-10q: the calendar wants the width; every other page is a column.
-  document.body.classList.toggle("wide-page", key === "calendar");
+  document.body.classList.toggle("wide-page", key === "calendar" || key === "page");
   keep("tutor-tab", key);
 }
 
@@ -4006,7 +4440,13 @@ function start() {
     // 2026-10-10q: every day's list, and her notes.
     stops.push(onSnapshot(doc(db, base + "live/alldays"), (snap) => {
       state.alldays = snap.exists() ? snap.data() : null;
-      drawTasks(); drawCalendarSoft();
+      drawTasks(); drawCalendarSoft(); drawPage();
+    }));
+    stops.push(onSnapshot(collection(db, base + "pages"), (snap) => {   // 2026-10-19i
+      const pages = {};
+      snap.docs.forEach((d) => { pages[d.id] = d.data(); });
+      state.pages = pages;
+      drawPage(); drawToday();
     }));
     stops.push(onSnapshot(doc(db, base + "live/notes"), (snap) => {
       state.notes = snap.exists() ? snap.data() : null;
