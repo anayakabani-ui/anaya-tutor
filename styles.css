@@ -913,3 +913,8 @@ body.popout #app { max-width: none; }
 .smart-step.keep { opacity: 0.6; }
 .smart-step-tag { flex: none; width: 92px; font-size: 0.75rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .smart-step-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+
+/* 2026-10-19q: done already, one date for all. */
+.smart-done { flex: none; width: auto; margin: 0; padding: 2px 10px; font-size: 0.8rem; }
+.smart-all { width: auto; margin: 0; padding: 6px 12px; }
+.smart-deadline { flex-wrap: wrap; }
