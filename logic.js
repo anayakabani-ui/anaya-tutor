@@ -1540,7 +1540,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v61";
+export const APP_VERSION = "v62";   // 2026-10-19o: was v61
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -2147,4 +2147,112 @@ export function carryList(lines, urgent) {
   const open = (lines || []).filter((l) => l.kind === "line" && !l.done && !l.repeat);
   return open.filter((l) => hot.has(l.raw)).concat(open.filter((l) => !hot.has(l.raw)))
     .map((l) => ({ ...l, urgent: hot.has(l.raw) }));
+}
+
+
+// ---- 2026-10-19o: smart planning. "u see what i haev to do, ask what tasks
+// MUST i do (u choose - is it hw or not? test upcoming or no? confident or
+// no?) and then i say deadline is eg this day, and youll set it up so im all
+// ready". smartItems makes the guesses, she fixes them, smartPlan spreads the
+// work over the days before each deadline.
+const SMART_HW = /\b(hw|homework|worksheet|assignment|due|classroom|essay)\b/i;
+const SMART_TEST = /\b(revise|revision|test|exam|quiz|mock|flashcards?|past papers?|practice)\b/i;
+export const SMART_SESSIONS = { yes: 1, kinda: 2, no: 3 };
+export const SMART_MOST = 40;
+
+function smartDay(iso, by) {
+  const d = new Date(String(iso).slice(0, 10) + "T12:00:00");
+  d.setDate(d.getDate() + by);
+  return isoDay(d);
+}
+const SMART_ISO = /^\d{4}-\d{2}-\d{2}$/;
+
+export function smartItems(found, tasks, exams, subjects, today) {
+  const now = isoDay(today);
+  const out = [];
+  const seen = new Set();
+  const nextTest = (subject) => {
+    if (!subject) return "";
+    const key = String(subject).toLowerCase();
+    return (exams || []).map((e) => ({ s: String((e && e.subject) || "").toLowerCase(), d: String((e && e.date) || "").slice(0, 10) }))
+      .filter((e) => e.s === key && SMART_ISO.test(e.d) && e.d >= now).map((e) => e.d).sort()[0] || "";
+  };
+  const add = (text, from, day, extra) => {
+    const words = String(text || "").trim();
+    if (!words || words.startsWith(">") || /^do \d+ from \[/i.test(words)) return;
+    const key = words.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    const x = extra || {};
+    const subject = guessSubject(words, subjects || []) || String(x.subject || "");
+    const test = nextTest(subject);
+    const left = test ? daysUntil(test, today) : null;
+    const kind = x.hw || SMART_HW.test(words) ? "hw"
+      : SMART_TEST.test(words) || (left !== null && left <= 21) ? "test" : "other";
+    const due = SMART_ISO.test(String(x.due || "")) ? String(x.due) : "";
+    const by = due || (kind === "test" ? test : "") || "";
+    out.push({ key, text: words, from, day: day || "", subject, list: String(x.list || ""), pick: Boolean(x.pick),
+               must: kind !== "other", kind, test: Boolean(test), testDay: test,
+               confident: kind === "test" && left !== null && left <= 7 ? "no" : "kinda", by });
+  };
+  ((found && found.days) || []).filter((d) => d.day >= now).forEach((d) =>
+    d.lines.forEach((l) => { if (!l.done && !l.fun) add(l.text, "day", d.day); }));
+  ((found && found.bank) || []).forEach((l) => add(l.text, "bank", "", { list: l.list, pick: l.subjects, subject: l.list }));
+  (tasks || []).forEach((t) => {
+    if (t && !t.done) add(t.name, "hw", "", { hw: true, due: String(t.due || "").slice(0, 10), subject: t.subject });
+  });
+  const rank = { hw: 0, test: 1, other: 2 };
+  return out.sort((a, b) => Number(b.must) - Number(a.must) || (a.by || "9999").localeCompare(b.by || "9999") ||
+    rank[a.kind] - rank[b.kind]).slice(0, SMART_MOST);
+}
+
+// steps: {act: "add" | "move" | "keep", text, day, from, pick}. A test gets
+// 1, 2 or 3 goes (confident yes, kinda, no), spread out, the last one the
+// day before. Homework goes early, so it's done before it's due.
+export function smartPlan(items, answers, found, today, deadline) {
+  const now = isoDay(today);
+  const load = {};
+  ((found && found.days) || []).forEach((d) => { load[d.day] = d.lines.filter((l) => !l.done).length; });
+  const fallback = SMART_ISO.test(String(deadline || "")) ? String(deadline) : smartDay(now, 7);
+  const steps = [];
+  const late = [];
+  const chosen = (items || []).map((it) => ({ ...it, ...((answers && answers[it.key]) || {}) })).filter((it) => it.must);
+  const byOf = (it) => (SMART_ISO.test(String(it.by || "")) ? String(it.by) : fallback);
+  chosen.sort((a, b) => byOf(a).localeCompare(byOf(b)));
+  const least = (days) => days.reduce((best, d) => ((load[d] || 0) < (load[best] || 0) ? d : best), days[0]);
+  chosen.forEach((it) => {
+    const by = byOf(it);
+    if (by < now) late.push(it.text);
+    let last = it.kind === "other" ? by : smartDay(by, -1);
+    if (last < now) last = now;
+    const range = [];
+    for (let d = now; d <= last && range.length < 60; d = smartDay(d, 1)) range.push(d);
+    const place = (text, day, act) => {
+      steps.push({ act, text, day, from: it.from === "day" ? it.day : it.from, pick: it.pick, kind: it.kind });
+      if (act !== "keep") load[day] = (load[day] || 0) + 1;
+    };
+    const home = (day) => {
+      if (it.from === "day" && it.day <= last && it.day >= now) return place(it.text, it.day, "keep");
+      if (it.from === "hw") return place("HW: " + it.text, day, "add");
+      return place(it.text, day, "move");
+    };
+    if (it.kind === "test") {
+      const n = Math.max(1, Math.min(SMART_SESSIONS[it.confident] || 2, range.length));
+      const size = range.length / n;
+      for (let i = 0; i < n; i++) {
+        const lo = Math.floor(i * size);
+        const part = range.slice(lo, Math.max(Math.floor((i + 1) * size), lo + 1));
+        const day = least(part);
+        if (i < n - 1) place("Go over " + it.text + " (" + (i + 1) + " of " + n + ")", day, "add");
+        else home(day);
+      }
+    } else if (it.kind === "hw") {
+      home(least(range.slice(0, Math.max(1, Math.ceil(range.length / 2)))));
+    } else {
+      home(least(range));
+    }
+  });
+  const days = {};
+  steps.forEach((s) => { (days[s.day] = days[s.day] || []).push(s); });
+  return { steps, late, days, changes: steps.filter((s) => s.act !== "keep").length };
 }
