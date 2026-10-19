@@ -114,7 +114,7 @@ const state = { tasks: [], exams: [], timetable: [], visits: [], day: null, meta
                 dragging: false, calStale: false, calDrag: null,
                 notes: null,           // live/notes off the laptop
                 // 2026-10-17: the bank's folds, the repeat form, the chat.
-                bankShut: new Set(), bankGroupsOpen: new Set(), calRepeat: null, flexFlip: {}, calDelete: null, delWaiting: new Map(), picksWaiting: [], calMulti: [], calMultiRepeat: false, calHidePast: false,
+                bankShut: new Set(), bankGroupsOpen: new Set(), calRepeat: null, flexFlip: {}, calInfo: null, calDayMenu: null, calDelete: null, delWaiting: new Map(), picksWaiting: [], calMulti: [], calMultiRepeat: false, calHidePast: false,
                 chat: [], chatSeen: false, chatWaiting: [],
                 // 2026-10-17b: events changed here, waiting for the laptop
                 // (id -> {day, title, start, end, atMs}); the one being
@@ -1186,6 +1186,117 @@ function shiftDay(day, minutes) {
   drawCalendar();
 }
 
+// ---- 2026-10-19e: a task's card, like Google Calendar's. Its name, its
+// day and time, its subject, and what can be done with it.
+function dayMenuButton(cell, found) {
+  const on = Boolean(found && found.flex && found.flex.has(cell.day)) !== Boolean(state.flexFlip[cell.day]);
+  const b = button("\u22ef", "plan-swap day-menu-btn" + (on ? " flex-on" : ""), (ev) => {
+    state.calDayMenu = state.calDayMenu && state.calDayMenu.day === cell.day ? null
+      : { day: cell.day, rect: ev.currentTarget.getBoundingClientRect() };
+    state.calInfo = null;
+    drawCalendar();
+  });
+  b.title = "Swap, Flexible, +30" + (on ? " (Flexible is on)" : "");
+  b.setAttribute("aria-label", "Day options for " + dayHead(cell.day, new Date()));
+  return b;
+}
+function popCard(rect, cls) {
+  const card = el("div", "pop-card " + (cls || ""));
+  card.setAttribute("role", "dialog");
+  const w = 340, pad = 10;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  let left = rect.right + pad;
+  if (left + w > vw - pad) left = Math.max(pad, rect.left - w - pad);
+  let top = Math.max(pad, Math.min(rect.top, vh - 260));
+  Object.assign(card.style, { left: left + "px", top: top + "px", width: w + "px" });
+  card.addEventListener("click", (ev) => ev.stopPropagation());
+  card.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+  return card;
+}
+function popTools(card, items) {
+  const row = el("div", "pop-tools");
+  items.forEach(([name, tip, act, danger]) => {
+    const b = iconButton(name, tip, act);
+    if (danger) b.classList.add("danger-ico");
+    row.append(b);
+  });
+  card.append(row);
+}
+function drawInfoCard(found) {
+  document.querySelectorAll(".pop-card").forEach((c) => c.remove());
+  const info = state.calInfo;
+  if (info && info.rect) {
+    const { day, raw } = info;
+    const card = popCard(info.rect, "task-card");
+    const locked = locksNow(found || {}).has(dayKey(day, raw));
+    const parts = splitLine(raw);
+    const tools = [
+      ["tick", "Done (Ctrl+Enter)", () => { state.calInfo = null; markDone(day, raw, true); }],
+      [locked ? "unlock" : "lock", locked ? "Unlock: a swap takes it" : "Lock to this day: a swap leaves it",
+        () => { state.calInfo = null; lockLine(day, raw, !locked); }],
+      ["repeat", "Repeat", () => { state.calInfo = null; state.calPick = { text: raw, from: day }; state.calRepeat = { text: raw, from: day }; drawCalendar(); }],
+    ];
+    if (parts) tools.push(["split", "Split into " + parts.n, () => { state.calInfo = null; splitPicked({ text: raw, from: day }, parts); }]);
+    if (info.timed) tools.push(["clockoff", "Take its time off", () => { state.calInfo = null; sendTime(day, raw, ""); }]);
+    tools.push(["bin", "Delete (Ctrl+Z puts it back)", () => {
+      state.calInfo = null; deleteLine(day, raw);
+      state.calSaid = "Deleted \u201c" + lineLabel(raw) + "\u201d. Ctrl+Z puts it back."; drawCalendar();
+    }, true]);
+    tools.push(["close", "Close (Esc)", () => { state.calInfo = null; state.calPick = null; drawCalendar(); }]);
+    popTools(card, tools);
+    const head = el("div", "pop-head");
+    const dot = el("span", "pop-dot");
+    const colour = subjectColour(subjectFor(info.line || { text: raw })) || "var(--accent)";
+    dot.style.background = colour;
+    head.append(dot, el("p", "pop-title", lineLabel(raw)));
+    card.append(head);
+    const when = dayHead(day, new Date()) + (info.timed && info.start !== undefined
+      ? " \u00b7 " + clockWords(hhmm(info.start)) + " to " + clockWords(hhmm(info.end)) : "");
+    card.append(el("p", "pop-line", when));
+    const subj = subjectFor(info.line || { text: raw });
+    const sub = /\[[^\]]*\/\s*([^\]]+)\]/.exec(raw);
+    if (subj) card.append(el("p", "pop-line muted", (/^dt$/i.test(subj) ? "DT" : subj.charAt(0).toUpperCase() + subj.slice(1).toLowerCase()) +
+      (sub ? " \u00b7 " + sub[1].trim().toLowerCase() : "")));
+    if (/^do 1 from/i.test(raw)) card.append(el("p", "pop-line muted", "When it's time, the tutor asks which one you'll do."));
+    if (locked) card.append(el("p", "pop-line muted", "Locked to this day."));
+    card.append(el("p", "pop-hint muted", "Drag it to move it. Or press where it goes."));
+    document.body.append(card);
+  }
+  const menu = state.calDayMenu;
+  if (menu && menu.rect) {
+    const card = popCard(menu.rect, "day-card");
+    const on = Boolean(found && found.flex && found.flex.has(menu.day)) !== Boolean(state.flexFlip[menu.day]);
+    popTools(card, [["close", "Close (Esc)", () => { state.calDayMenu = null; drawCalendar(); }]]);
+    card.append(el("p", "pop-title", dayHead(menu.day, new Date())));
+    const list = el("div", "pop-menu");
+    const item = (label, tip, act) => { const b = button(label, "pop-item", act); b.title = tip; list.append(b); };
+    item("Swap with another day", "Then press Swap here on the other day (locked tasks stay)", () => {
+      state.calDayMenu = null; state.calSwap = menu.day; state.calSaid = "Now press Swap here on the other day."; drawCalendar();
+    });
+    item(on ? "Flexible: on (turn off)" : "Make it flexible",
+      "Flexible: tasks with a time that you're more than 15 minutes late for move on by themselves", () => {
+        state.flexFlip = { ...state.flexFlip, [menu.day]: !state.flexFlip[menu.day] };
+        sendEdit({ kind: "flex_day", day: menu.day, on: !on });
+        state.calDayMenu = null;
+        state.calSaid = !on ? "Flexible: anything with a time that you're more than 15 minutes late for moves on by itself."
+          : "Flexible's off for that day.";
+        drawCalendar();
+      });
+    item("+30: what's still to come, half an hour later", "Ctrl+Z puts them back", () => { state.calDayMenu = null; shiftDay(menu.day, 30); });
+    item("+15: a quarter of an hour later", "Ctrl+Z puts them back", () => { state.calDayMenu = null; shiftDay(menu.day, 15); });
+    card.append(list);
+    document.body.append(card);
+  }
+}
+document.addEventListener("click", (ev) => {
+  if ((state.calInfo || state.calDayMenu) && !ev.target.closest(".pop-card, .tg-item, .plan-line, .day-menu-btn")) {
+    state.calInfo = null; state.calDayMenu = null; drawCalendar();
+  }
+});
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && (state.calInfo || state.calDayMenu)) { state.calInfo = null; state.calDayMenu = null; drawCalendar(); }
+});
+
 function timesDrop(target, day, onHours) {
   const at = (event) => dropTime(event.clientY - target.getBoundingClientRect().top);
   target.dataset.pasteDay = day;               // 2026-10-19b: Ctrl+V lands here
@@ -1294,7 +1405,7 @@ function timedBlock(item, day, past) {
     : !isEvent ? " to " + clockWords(hhmm(item.end)) : "");   // 2026-10-19d: start and end
   block.append(el("span", "tg-item-name", isEvent ? item.label : lineLabel(item.label)), el("span", "tg-item-time", when));
   if (item.lanes > 1) block.classList.add("narrow");        // 2026-10-19: the name first
-  if (!isEvent && !past) taskTools(block, day, item.line, true);     // 2026-10-19d
+  // 2026-10-19e: the icons came off the task; a click opens its card.
   if (!isEvent) {
     block.dataset.day = day; block.dataset.raw = item.line.raw;
     if ((state.calMulti || []).some((m) => m.key === day + "|" + item.line.raw)) block.classList.add("multi");
@@ -1319,6 +1430,8 @@ function timedBlock(item, day, past) {
   block.addEventListener("click", () => {
     state.calPick = picked ? null : { text: raw, from: day, timed: true };
     state.calSaid = "";
+    state.calInfo = picked ? null : { day, raw, line: item.line, timed: true, start: item.start, end: item.end,
+                                      rect: block.getBoundingClientRect() };   // 2026-10-19e
     drawCalendar();
   });
   block.addEventListener("dragstart", (event) => {
@@ -1353,7 +1466,9 @@ function drawTimes(box, days, found, now, pick) {
     const h = el("div", "tg-dayhead" + (cell.today ? " today" : "") + (cell.past ? " past" : "") +
       (state.calSwap === cell.day ? " swapping" : ""));
     h.append(el("span", "plan-name", cell.name), el("span", "tg-date", String(cell.date)));
-    if (!cell.past) h.append(swapButton(cell), flexChips(cell, found));   // 2026-10-19d
+    // 2026-10-19e: "now its TOO CLUTTERED". Swap, Flexible and +30 are in
+    // one little menu on the day; only a swap in progress shows its button.
+    if (!cell.past) h.append(state.calSwap ? swapButton(cell) : dayMenuButton(cell, found));
     head.append(h);
   });
   const top = el("div", "tg-row tg-top");
@@ -1668,7 +1783,7 @@ function calLine(line, dayId, past, pick) {
     if (item.firstChild && item.firstChild.nodeType === 3) item.firstChild.textContent = lineLabel(line.text);
     else if (item.lastChild && item.lastChild.nodeType === 3) item.lastChild.textContent = lineLabel(line.text);
     if (can && dayId !== BANK) { item.dataset.day = dayId; item.dataset.raw = line.raw; }
-    if (can && dayId !== BANK && !line.repeat) taskTools(item, dayId, line, false);   // 2026-10-19d
+
   }
   if (line.repeat) item.title = "Comes back every day. It lands on this day's list on the day.";
   if (!can) return item;
@@ -1686,6 +1801,8 @@ function calLine(line, dayId, past, pick) {
     state.calDelete = null;
     state.calSaid = "";
     state.calRepeat = null;
+    // 2026-10-19e: "i click on it and a description of tasks like google".
+    state.calInfo = picked || dayId === BANK ? null : { day: dayId, raw: line.raw, line, timed: false, rect: item.getBoundingClientRect() };
     drawCalendar();
   });
   item.addEventListener("dragstart", (event) => {
@@ -2212,6 +2329,7 @@ function icon(name) {
     sliders: ["M2.5 4.5h11", "M2.5 8h11", "M2.5 11.5h11", "M5.5 3v3", "M10.5 6.5v3", "M7 10v3"],
     plus: ["M8 3v10", "M3 8h10"],
     tick: ["M3.5 8.5l3 3 6-7"],      // 2026-10-19c
+    close: ["M4 4l8 8", "M12 4l-8 8"],   // 2026-10-19e
     repeat: ["M3 7a5 5 0 0 1 9-2.5", "M12.5 2.5v2.5h-2.5", "M13 9a5 5 0 0 1-9 2.5", "M3.5 13.5V11H6"],   // 2026-10-19d
     split: ["M8 2.5v4", "M8 6.5L4 13", "M8 6.5l4 6.5"],
     clockoff: ["M8 2.5a5.5 5.5 0 1 0 0 11a5.5 5.5 0 1 0 0-11", "M8 5v3l2 1.5", "M3 13L13 3"],
@@ -2439,6 +2557,7 @@ function drawCalendar() {
     drawPlanCheck(box, found);             // 2026-10-18
     box.append(el("p", "muted", "Drag a task onto an hour to give it a rough time, or to the top to take it off. " +
       "Meals and prayers stay on Today. Days that have gone can't be changed."));
+    try { drawInfoCard(found); } catch (error) { /* never stops the calendar */ }   // 2026-10-19e
     return;
   }
   const grid = el("div", "plan-grid " + state.calView);
@@ -2474,6 +2593,7 @@ function drawCalendar() {
   drawBank(box, found, pick);
   drawPlanCheck(box, found);               // 2026-10-18
   box.append(el("p", "muted", "Only the day changes, never the words. Meals and prayers stay on Today. Days that have gone can't be changed."));
+  try { drawInfoCard(allDays(state.alldays)); } catch (error) { /* never stops the calendar */ }   // 2026-10-19e
 }
 
 // ---- 2026-10-10q: her notes, the same ones as the top of the tutor's
