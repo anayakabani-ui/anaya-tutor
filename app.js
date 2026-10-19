@@ -4072,6 +4072,12 @@ function drawPage() {
              el("h2", "page-date", dayHead(day, new Date())),
              button("›", "quiet page-step", () => { page.day = addDayIso(day, 1); page.held = null; page.said = ""; drawPage(); }));
   if (day !== today) bar.append(button("Today", "quiet", () => { page.day = today; drawPage(); }));
+  // 2026-10-19k: split with the calendar, or pop the planner out into its own small window.
+  if (!narrow() && !isPopout()) bar.append(button(page.split ? "Just the page" : "Split with calendar", "quiet page-split",
+    () => { page.split = !page.split; selectTab("page"); drawPage(); }));
+  if (!isPopout()) bar.append(button("Pop out", "quiet page-popout", () => {
+    window.open(location.pathname + "?pop=page", "tutor-day", "popup,width=440,height=800");
+  }));
   bar.querySelectorAll(".page-step")[0].setAttribute("aria-label", "Day before");
   bar.querySelectorAll(".page-step")[1].setAttribute("aria-label", "Day after");
   box.append(bar);
@@ -4222,6 +4228,9 @@ const TAB_BUTTONS = "#tabs button, #top-tabs button";
 const narrow = () => window.matchMedia("(max-width: 819px)").matches;
 
 function selectTab(key, focus) {
+  // 2026-10-19k: a pop-out window (?pop=page) is only ever the Day page.
+  const popout = isPopout();
+  if (popout) key = "page";
   const name = tabName(key);
   if (!name) return;
   state.tab = key;
@@ -4233,12 +4242,43 @@ function selectTab(key, focus) {
     show("tab-" + other.dataset.tab, on);
     if (on && focus) other.focus();
   });
+  // 2026-10-19k: the Day page and the calendar share the screen when split.
+  const split = key === "page" && page.split && !narrow();
+  show("pair", key === "page" || key === "calendar");
+  show("tab-calendar", key === "calendar" || split);
+  document.body.classList.toggle("split-view", split);
+  if (split) drawCalendar();
   // A page off the side says its name; one on the top is already lit there.
   $("page-name").textContent = name;
   show("page-name", !tabOnTop(key));
   // 2026-10-10q: the calendar wants the width; every other page is a column.
   document.body.classList.toggle("wide-page", key === "calendar" || key === "page");
-  keep("tutor-tab", key);
+  document.body.classList.toggle("popout", popout);
+  if (!popout) keep("tutor-tab", key);
+}
+
+// 2026-10-19k: opened by the Day page's "Pop out" button, in its own small window.
+function isPopout() {
+  try { return new URLSearchParams(location.search).get("pop") === "page"; } catch (e) { return false; }
+}
+
+// 2026-10-19k: once an hour, a small card asks her to look at her planner.
+// It shows at most once an hour and never stacks.
+function hourlyLook() {
+  if ($("app").hidden) return;                          // not signed in yet
+  const now = new Date();
+  const hour = isoDay(now) + " " + now.getHours();
+  if (recall("tutor-look-hour", "") === hour) return;
+  if (document.querySelector(".look-toast")) return;
+  keep("tutor-look-hour", hour);
+  const card = el("div", "look-toast");
+  card.setAttribute("role", "status");
+  card.append(el("p", "", "It's " + hhmm(now.getHours() * 60 + now.getMinutes()) + ". Look at your day. What's next?"));
+  const row = el("div", "look-toast-row");
+  row.append(button("Open my day", "quiet", () => { selectTab("page"); card.remove(); }),
+             button("Later", "quiet", () => card.remove()));
+  card.append(row);
+  document.body.append(card);
 }
 
 function sideOpen(open) {
@@ -4336,6 +4376,7 @@ function start() {
     }
   });
   setInterval(drawSync, 5000);         // so "isn't answering" can show up
+  setInterval(hourlyLook, 60000);      // 2026-10-19k: the hourly look
   setInterval(() => { if (state.chatWaiting.length) drawTalk(); }, 10000);   // 2026-10-17
   // 2026-10-10q: "Sent" on the notes gives way once the laptop has answered
   // or stopped answering, and a drag that never arrived goes back.
