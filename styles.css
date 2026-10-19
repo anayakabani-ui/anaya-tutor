@@ -685,3 +685,6 @@ button.plan-swap:hover { background: none; box-shadow: none; }
 .plan-line.deleting { opacity: .5; text-decoration: line-through; pointer-events: none; }
 /* 2026-10-18f: a Do 1 from card just dropped on an hour, till the laptop has it */
 .tg-item.moving:not(.event) { opacity: .55; font-style: italic; }
+/* 2026-10-19: a task's bottom pulls longer, like an event's */
+.tg-item:not(.event):hover .tg-resize::after { opacity: .45; }
+.tg-item.pulling { opacity: .85; z-index: 5; box-shadow: var(--shadow-up); }
