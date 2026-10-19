@@ -886,3 +886,30 @@ body.popout #app { max-width: none; }
 .page-fun-item:hover { background: var(--row-hover); }
 .page-fun-words { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .page-fun-x { width: auto; margin: 0; padding: 2px 8px; font-size: 0.8rem; }
+
+/* 2026-10-19o: smart plan. */
+.page-smart-go { margin-left: auto; }
+.smart-card { max-width: 900px; }
+.smart-deadline { display: flex; align-items: center; gap: 10px; margin: 6px 0 14px; font-weight: 600; }
+.smart-deadline input, .smart-q input[type="date"] { width: auto; margin: 0; padding: 6px 10px; }
+.smart-list { display: flex; flex-direction: column; gap: 10px; }
+.smart-item { border-radius: 10px; padding: 10px 12px; background: var(--soft); opacity: 0.75; }
+.smart-item.must { opacity: 1; box-shadow: inset 3px 0 0 var(--accent); }
+.smart-item-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+.smart-item-name { flex: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.smart-item-where { flex: none; font-size: 0.8rem; color: var(--muted); }
+.smart-q { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+.smart-q-label { width: 92px; flex: none; font-size: 0.85rem; color: var(--muted); }
+.smart-q-hint { font-size: 0.8rem; }
+.smart-chip { width: auto; margin: 0; padding: 4px 12px; border-radius: var(--r-chip); background: var(--card); color: var(--text); font-weight: 500; }
+.smart-chip.on { background: var(--accent); color: #fff; }
+.smart-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+.smart-actions button { width: auto; }
+.smart-late { color: var(--warn); font-weight: 600; }
+.smart-day { margin-top: 12px; }
+.smart-day-head { font-size: 1rem; margin: 0 0 6px; }
+.smart-step { display: flex; gap: 10px; align-items: baseline; padding: 4px 8px; border-radius: 8px; }
+.smart-step.add { background: var(--accent-soft); }
+.smart-step.keep { opacity: 0.6; }
+.smart-step-tag { flex: none; width: 92px; font-size: 0.75rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.smart-step-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
