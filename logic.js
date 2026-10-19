@@ -1343,7 +1343,8 @@ export function allDays(live) {
   if (held.times && typeof held.times === "object") {
     Object.keys(held.times).forEach((k) => {
       const at = String(held.times[k] || "");
-      if (/^\d{4}-\d{2}-\d{2}\|/.test(k) && /^\d{2}:\d{2}$/.test(at)) times[k] = at;
+      // 2026-10-19: a task's time can be a span ("10:00-11:30").
+      if (/^\d{4}-\d{2}-\d{2}\|/.test(k) && timeParts(at)) times[k] = at;
     });
   }
   const events = (Array.isArray(held.events) ? held.events : []).filter((e) => e && typeof e === "object" &&
@@ -1381,6 +1382,27 @@ export const minutesOf = (hhmm) => {
   const m = /^(\d{2}):(\d{2})$/.exec(String(hhmm || ""));
   return m ? Number(m[1]) * 60 + Number(m[2]) : null;
 };
+// 2026-10-19: "cant extend amount of time a task holds by drag". A task's
+// time is "HH:MM" (half an hour) or "HH:MM-HH:MM" once she's pulled it
+// longer or shorter.
+export function timeParts(at) {
+  const m = /^(\d{2}):(\d{2})(?:-(\d{2}):(\d{2}))?$/.exec(String(at || ""));
+  if (!m) return null;
+  const start = Number(m[1]) * 60 + Number(m[2]);
+  const end = m[3] === undefined ? null : Number(m[3]) * 60 + Number(m[4]);
+  if (start > 23 * 60 + 59 || (end !== null && (end <= start || end > 24 * 60))) return null;
+  return { start, end };
+}
+export function timeSpan(start, end) {
+  const s = Math.max(0, Math.min(23 * 60 + 45, Math.round(start)));
+  const e = Math.max(s + 15, Math.min(24 * 60 - 1, Math.round(end)));
+  return hhmm(s) + "-" + hhmm(e);
+}
+export function taskLength(at) {
+  const p = timeParts(at);
+  return p && p.end !== null ? p.end - p.start : 30;
+}
+
 export const hhmm = (minutes) => {
   const m = Math.max(0, Math.min(23 * 60 + 59, Math.round(minutes)));
   return String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
@@ -1403,9 +1425,11 @@ export function timeColumn(lines, day, times, events) {
   const untimed = [], timed = [];
   (lines || []).forEach((line) => {
     const at = line.kind === "line" || line.kind === "head" ? (times || {})[day + "|" + line.raw] : null;
-    const start = minutesOf(at);
-    if (start === null || line.sub || line.done) { untimed.push(line); return; }
-    timed.push({ kind: "line", line, start, end: start + 30, label: line.text });
+    const parts = timeParts(at);
+    if (!parts || line.sub || line.done) { untimed.push(line); return; }
+    const start = parts.start;
+    timed.push({ kind: "line", line, start, end: parts.end !== null ? parts.end : start + 30,
+                 ranged: parts.end !== null, label: line.text });
   });
   (events || []).filter((e) => e.day === day).forEach((e) => {
     const start = minutesOf(e.start);
@@ -1444,7 +1468,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v48";
+export const APP_VERSION = "v49";
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
