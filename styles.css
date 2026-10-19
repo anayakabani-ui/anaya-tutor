@@ -862,3 +862,16 @@ body.popout #app { max-width: none; }
 }
 .look-toast p { margin: 0 0 10px; }
 .look-toast-row { display: flex; gap: 8px; justify-content: flex-end; }
+
+/* 2026-10-19n: "doesnt mean it has to bhave rubbish ui in the meantime".
+   The bar on one line, the date grows, Split view and Pop out sit right. */
+.page-bar { flex-wrap: wrap; }
+.page-bar button { white-space: nowrap; }
+.page-bar .page-date { flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.page-bar .page-split { margin-left: auto; }
+/* What got done in a half hour that's over. */
+.page-did { font-size: 0.85rem; color: var(--muted); padding: 3px 8px; margin: 2px 0; border-radius: 8px; background: var(--accent-soft, rgba(0, 0, 0, 0.04)); }
+.page-did-early { display: grid; grid-template-columns: 48px minmax(0, 1fr); margin-bottom: 6px; }
+/* Several North Stars, each with an x. */
+.page-star-row + .page-star-row { margin-top: 6px; }
+.page-star-row > button.quiet:last-child { margin-left: auto; padding: 2px 10px; }
