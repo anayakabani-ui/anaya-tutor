@@ -32,7 +32,7 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          rewardUse, rewardPiles,
          allDays, dayKey, dayLines, dayHead, allDaysCount, settleDays,
          CAL_VIEWS, CAL_FEW, addMove, BANK, BANK_PICK, pickCount, settlePicks, withPicks, totalCount, typedWords, PICK_LEASTS, bankTabs, pickLine, withMoves, calendarDays,
-         HOUR_PX, ZOOMS, setHourPx, timeSnap, pickName, CAL_LAYOUTS, clockWords, minutesOf, hhmm, timeParts, timeSpan, taskLength, lineLabel, boxHits, dropTime, mergedTimes, timeColumn, firstScroll, scrollFloor, CAL_LOCK_HOUR, settleSwaps, swapSig, calendarStep, calendarTitle, calendarCells,
+         HOUR_PX, ZOOMS, setHourPx, timeSnap, pickName, CAL_LAYOUTS, clockWords, minutesOf, hhmm, timeParts, timeSpan, taskLength, lineLabel, boxHits, shiftTimes, dropTime, mergedTimes, timeColumn, firstScroll, scrollFloor, CAL_LOCK_HOUR, settleSwaps, swapSig, calendarStep, calendarTitle, calendarCells,
          moveProblem, settleMoves, notesIncoming, noteVersion,
          splitLine, parseChat, chatWaiting, APP_VERSION, nowScroll, eventAfterDrag,
          planCheck, repeatWords, subjectColour, eventColour, EVENT_COLOURS } from "./logic.js";
@@ -114,7 +114,7 @@ const state = { tasks: [], exams: [], timetable: [], visits: [], day: null, meta
                 dragging: false, calStale: false, calDrag: null,
                 notes: null,           // live/notes off the laptop
                 // 2026-10-17: the bank's folds, the repeat form, the chat.
-                bankShut: new Set(), bankGroupsOpen: new Set(), calRepeat: null, calDelete: null, delWaiting: new Map(), picksWaiting: [], calMulti: [], calMultiRepeat: false, calHidePast: false,
+                bankShut: new Set(), bankGroupsOpen: new Set(), calRepeat: null, flexFlip: {}, calDelete: null, delWaiting: new Map(), picksWaiting: [], calMulti: [], calMultiRepeat: false, calHidePast: false,
                 chat: [], chatSeen: false, chatWaiting: [],
                 // 2026-10-17b: events changed here, waiting for the laptop
                 // (id -> {day, title, start, end, atMs}); the one being
@@ -1077,6 +1077,115 @@ function boxSelect(col, wrap) {
   });
 }
 
+// 2026-10-19d: the hover icons on a task: done, lock, repeat, split, time
+// off (if it has one) and delete (undo with Ctrl+Z). Spans, not buttons, so
+// they sit inside the task's own button.
+function taskTools(node, day, line, timed) {
+  const raw = line.raw;
+  const tools = el("span", "task-tools");
+  const tool = (name, tip, act) => {
+    const t = el("span", "task-tool");
+    t.setAttribute("role", "button");
+    t.tabIndex = -1;
+    t.title = tip;
+    t.setAttribute("aria-label", tip);
+    t.append(icon(name));
+    t.addEventListener("mousedown", (ev) => { ev.stopPropagation(); ev.preventDefault(); });
+    t.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+    t.addEventListener("click", (ev) => { ev.stopPropagation(); ev.preventDefault(); act(); });
+    tools.append(t);
+  };
+  tool("tick", "Done", () => markDone(day, raw, true));
+  const locked = locksNow(allDays(state.alldays) || {}).has(dayKey(day, raw));
+  tool(locked ? "unlock" : "lock", locked ? "Unlock (a swap takes it)" : "Lock to this day (a swap leaves it)",
+    () => lockLine(day, raw, !locked));
+  tool("repeat", "Repeat", () => {
+    state.calPick = { text: raw, from: day, timed };
+    state.calRepeat = { text: raw, from: day };
+    drawCalendar();
+  });
+  const parts = splitLine(raw);
+  if (parts) tool("split", "Split into " + parts.n + " \u00d7 \u201c" + parts.one + "\u201d", () => splitPicked({ text: raw, from: day }, parts));
+  if (timed) tool("clockoff", "Take its time off", () => sendTime(day, raw, ""));
+  tool("bin", "Delete (Ctrl+Z puts it back)", () => {
+    deleteLine(day, raw);
+    state.calSaid = "Deleted \u201c" + lineLabel(raw) + "\u201d. Ctrl+Z puts it back.";
+    drawCalendar();
+  });
+  node.append(tools);
+}
+
+// 2026-10-19d: "itd also be better if the tasks could SNAP into a position".
+// While a task is held over the hours, a box shows where it'll land.
+function snapMark(target, day, y) {
+  const held = state.calDrag;
+  if (!held || held.event) return;
+  const at = dropTime(y);
+  let length = 30;
+  if (held.timed) {
+    const had = mergedTimes(allDays(state.alldays), state.timesWaiting, Date.now())[held.from + "|" + held.text];
+    length = taskLength(had);
+  }
+  let mark = target.querySelector(".tg-snap");
+  if (!mark) { mark = el("div", "tg-snap"); target.append(mark); }
+  const start = minutesOf(at);
+  mark.style.top = (start / 60 * HOUR_PX) + "px";
+  mark.style.height = Math.max(18, length / 60 * HOUR_PX - 2) + "px";
+  mark.textContent = clockWords(at) + (held.count > 1 ? " \u00d7 " + held.count : "");
+}
+function snapOff() { document.querySelectorAll(".tg-snap").forEach((m) => m.remove()); }
+document.addEventListener("dragend", snapOff);
+document.addEventListener("drop", () => setTimeout(snapOff, 0));
+
+// 2026-10-19d: flexible days. "c": both. A day's Flexible switch (the
+// laptop moves what she's late for by itself), and +30 to move what's
+// still to come that day half an hour later.
+function flexChips(cell, found) {
+  const wrap = el("span", "flex-chips");
+  const on = Boolean(found && found.flex && found.flex.has(cell.day)) !== Boolean(state.flexFlip[cell.day]);
+  const fb = button("Flexible", "plan-swap flex" + (on ? " on" : ""), () => {
+    state.flexFlip = { ...state.flexFlip, [cell.day]: !state.flexFlip[cell.day] };
+    sendEdit({ kind: "flex_day", day: cell.day, on: !on });
+    state.calSaid = !on ? "Flexible: anything with a time that you're more than 15 minutes late for moves on by itself."
+      : "Flexible's off for that day. Times stay where you put them.";
+    drawCalendar();
+  });
+  fb.setAttribute("aria-pressed", String(on));
+  fb.title = on ? "Flexible is on: late tasks move on by themselves. Press to turn it off."
+    : "Make this day flexible: tasks you haven't done move on by themselves";
+  wrap.append(fb);
+  const plus = button("+30", "plan-swap", () => shiftDay(cell.day, 30));
+  plus.title = "Move the tasks still to come on this day 30 minutes later (Ctrl+Z undoes)";
+  wrap.append(plus);
+  return wrap;
+}
+function shiftDay(day, minutes) {
+  const now = new Date();
+  const found = allDays(state.alldays);
+  const times = mergedTimes(found, state.timesWaiting, Date.now());
+  const from = day === isoDay(now) ? now.getHours() * 60 + now.getMinutes() - 15 : 0;
+  const done = new Set();
+  ((found && found.days) || []).filter((d) => d.day === day)
+    .forEach((d) => d.lines.forEach((l) => { if (l.done) done.add(day + "|" + String(l.text).trim()); }));
+  const moved = shiftTimes(times, day, minutes, from, done);
+  const keys = Object.keys(moved);
+  if (!keys.length) { state.calSaid = "Nothing with a time still to come on that day."; drawCalendar(); return; }
+  const before = {};
+  keys.forEach((k) => { before[k] = times[k]; });
+  const apply = (map) => Object.keys(map).forEach((k) => {
+    state.timesWaiting = state.timesWaiting.filter((t) => t.key !== k);
+    state.timesWaiting.push({ key: k, at: map[k], atMs: Date.now() });
+  });
+  apply(moved);
+  sendEdit({ kind: "day_shift", day, minutes });
+  remember("+" + minutes + " on " + dayHead(day, now), () => {
+    apply(before);
+    Object.keys(before).forEach((k) => sendEdit({ kind: "line_time", day, text: k.slice(day.length + 1), time: before[k] }));
+  }, () => { apply(moved); sendEdit({ kind: "day_shift", day, minutes }); });
+  state.calSaid = "Moved " + keys.length + (keys.length === 1 ? " task " : " tasks ") + minutes + " minutes later. Ctrl+Z puts them back.";
+  drawCalendar();
+}
+
 function timesDrop(target, day, onHours) {
   const at = (event) => dropTime(event.clientY - target.getBoundingClientRect().top);
   target.dataset.pasteDay = day;               // 2026-10-19b: Ctrl+V lands here
@@ -1084,16 +1193,18 @@ function timesDrop(target, day, onHours) {
   target.addEventListener("dragover", (event) => {
     if (!state.calDrag) return;
     event.preventDefault();
+    if (onHours) snapMark(target, day, event.clientY - target.getBoundingClientRect().top);   // 2026-10-19d
     // 2026-10-18f: a "Do 1 from" card is a copy. A "move" here made the
     // browser refuse the drop, so dragging one did nothing at all.
     event.dataTransfer.dropEffect = state.calDrag.from === BANK_PICK ? "copy" : "move";
     target.classList.add("over");
   });
   target.addEventListener("dragleave", (event) => {
-    if (!target.contains(event.relatedTarget)) target.classList.remove("over");
+    if (!target.contains(event.relatedTarget)) { target.classList.remove("over"); snapOff(); }
   });
   target.addEventListener("drop", (event) => {
     event.preventDefault();
+    snapOff();
     const held = state.calDrag;
     state.dragging = false; state.calDrag = null; state.calStale = false;
     if (!held) return;
@@ -1166,7 +1277,9 @@ function timedBlock(item, day, past) {
   const tall = Math.max(22, (item.end - item.start) / 60 * HOUR_PX - 2);
   const width = 100 / item.lanes;
   const isEvent = item.kind === "event";
-  const short = item.end - item.start <= 45;
+  // 2026-10-19d: "i also want the time for when tasks occurs". Tall enough
+  // for two lines: the name on top (wrapping), the time under it.
+  const short = (item.end - item.start) / 60 * HOUR_PX < 36;
   const block = el(past ? "div" : "button", "tg-item" + (isEvent ? " event" : "") + (short ? " short" : ""));
   if (!past) block.type = "button";
   // 2026-10-18b: an event she coloured keeps its colour; a subject line its subject's.
@@ -1178,9 +1291,10 @@ function timedBlock(item, day, past) {
   block.style.left = "calc(" + (item.lane * width) + "% + 2px)";
   block.style.width = "calc(" + width + "% - 4px)";
   const when = clockWords(hhmm(item.start)) + (isEvent && item.event.end ? " to " + clockWords(item.event.end)
-    : !isEvent && item.ranged ? " to " + clockWords(hhmm(item.end)) : "");
+    : !isEvent ? " to " + clockWords(hhmm(item.end)) : "");   // 2026-10-19d: start and end
   block.append(el("span", "tg-item-name", isEvent ? item.label : lineLabel(item.label)), el("span", "tg-item-time", when));
   if (item.lanes > 1) block.classList.add("narrow");        // 2026-10-19: the name first
+  if (!isEvent && !past) taskTools(block, day, item.line, true);     // 2026-10-19d
   if (!isEvent) {
     block.dataset.day = day; block.dataset.raw = item.line.raw;
     if ((state.calMulti || []).some((m) => m.key === day + "|" + item.line.raw)) block.classList.add("multi");
@@ -1239,7 +1353,7 @@ function drawTimes(box, days, found, now, pick) {
     const h = el("div", "tg-dayhead" + (cell.today ? " today" : "") + (cell.past ? " past" : "") +
       (state.calSwap === cell.day ? " swapping" : ""));
     h.append(el("span", "plan-name", cell.name), el("span", "tg-date", String(cell.date)));
-    if (!cell.past) h.append(swapButton(cell));
+    if (!cell.past) h.append(swapButton(cell), flexChips(cell, found));   // 2026-10-19d
     head.append(h);
   });
   const top = el("div", "tg-row tg-top");
@@ -1291,7 +1405,15 @@ function drawTimes(box, days, found, now, pick) {
     body.append(col);
   });
   scroll.append(body);
-  wrap.append(head, top, scroll);
+  // 2026-10-19d: "the large/small button for the size to be increasable and
+  // in the bottom right corner of the calendar". Floating, with more sizes.
+  const zoom = el("div", "tg-zoom");
+  const zo = iconButton("zoomout", "Zoom out (Ctrl + scroll works too)", () => zoomHours(-1));
+  const zi = iconButton("zoomin", "Zoom in (Ctrl + scroll works too)", () => zoomHours(1));
+  zo.disabled = HOUR_PX <= ZOOMS[0];
+  zi.disabled = HOUR_PX >= ZOOMS[ZOOMS.length - 1];
+  zoom.append(zo, el("span", "tg-zoom-size", Math.round(HOUR_PX / 48 * 100) + "%"), zi);
+  wrap.append(head, top, scroll, zoom);
   box.append(wrap);
   // Opens at the first thing with a time; after that, stays where she left it.
   const key = days.join();
@@ -1546,6 +1668,7 @@ function calLine(line, dayId, past, pick) {
     if (item.firstChild && item.firstChild.nodeType === 3) item.firstChild.textContent = lineLabel(line.text);
     else if (item.lastChild && item.lastChild.nodeType === 3) item.lastChild.textContent = lineLabel(line.text);
     if (can && dayId !== BANK) { item.dataset.day = dayId; item.dataset.raw = line.raw; }
+    if (can && dayId !== BANK && !line.repeat) taskTools(item, dayId, line, false);   // 2026-10-19d
   }
   if (line.repeat) item.title = "Comes back every day. It lands on this day's list on the day.";
   if (!can) return item;
@@ -2089,6 +2212,9 @@ function icon(name) {
     sliders: ["M2.5 4.5h11", "M2.5 8h11", "M2.5 11.5h11", "M5.5 3v3", "M10.5 6.5v3", "M7 10v3"],
     plus: ["M8 3v10", "M3 8h10"],
     tick: ["M3.5 8.5l3 3 6-7"],      // 2026-10-19c
+    repeat: ["M3 7a5 5 0 0 1 9-2.5", "M12.5 2.5v2.5h-2.5", "M13 9a5 5 0 0 1-9 2.5", "M3.5 13.5V11H6"],   // 2026-10-19d
+    split: ["M8 2.5v4", "M8 6.5L4 13", "M8 6.5l4 6.5"],
+    clockoff: ["M8 2.5a5.5 5.5 0 1 0 0 11a5.5 5.5 0 1 0 0-11", "M8 5v3l2 1.5", "M3 13L13 3"],
     zoomin: ["M7 3a4 4 0 1 0 0 8a4 4 0 1 0 0-8", "M10 10l3.5 3.5", "M5 7h4", "M7 5v4"],   // 2026-10-19c
     zoomout: ["M7 3a4 4 0 1 0 0 8a4 4 0 1 0 0-8", "M10 10l3.5 3.5", "M5 7h4"],
     bin: ["M3 4.5h10", "M6.5 4.5V3h3v1.5", "M4.5 4.5l.7 8.5h5.6l.7-8.5", "M7 7v4", "M9 7v4"],   // 2026-10-18e
@@ -2207,8 +2333,7 @@ function drawCalendar() {
   const hours = state.calLayout === "times" && state.calView !== "month";
   if (hours) {
     // 2026-10-19c: zoom the hours in and out (Ctrl + mouse wheel on them works too).
-    tools.append(iconButton("zoomout", "Zoom out", () => zoomHours(-1), false),
-      iconButton("zoomin", HOUR_PX >= 192 ? "Zoomed in all the way (quarter hours)" : "Zoom in: see every half hour", () => zoomHours(1), HOUR_PX > 48));
+    // 2026-10-19d: zoom is at the bottom right of the hours now.
     tools.append(iconButton(state.calHoursLocked ? "lock" : "unlock",
       state.calHoursLocked ? "Hours locked at 5am: press to scroll to midnight"
         : "Hours unlocked: press to lock them at 5am", () => {
@@ -2265,7 +2390,12 @@ function drawCalendar() {
     row.append(el("p", "plan-title", "\u201c" + pick.text + "\u201d comes back every day."),
       button("Stop repeating", "quiet", () => stopRepeat(pick.text)));
     box.append(row);
-  } else if (pick && pick.from !== BANK && pick.from !== BANK_PICK) {
+  } else if (pick && pick.from !== BANK && pick.from !== BANK_PICK && state.calRepeat && state.calRepeat.text === pick.text) {
+    // 2026-10-19d: "id like the edit things for each task to be like a hover
+    // one". Done, lock, repeat, split, time off and delete are icons on the
+    // task itself now; only the repeat form still opens here.
+    box.append(repeatForm(pick, splitLine(pick.text)));
+  } else if (false) {
     const locked = locksNow(found).has(dayKey(pick.from, pick.text));
     const row = el("div", "plan-bar");
     const lb = button(locked ? "Unlock" : "Lock to this day", "quiet",
@@ -2302,9 +2432,7 @@ function drawCalendar() {
   }
   if (state.calMulti.length) box.append(multiBar());                      // 2026-10-18c
   if (state.calEventPick) box.append(eventEditor(state.calEventPick));   // 2026-10-17b
-  if (pick && pick.timed) {
-    box.append(button("Take its time off", "quiet", () => sendTime(pick.from, pick.text, "")));
-  }
+  // 2026-10-19d: "Take its time off" is the clock icon on the task now.
   if (state.calLayout === "times" && state.calView !== "month") {
     drawTimes(box, days, found, now, pick);
     drawBank(box, found, pick);
