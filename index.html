@@ -96,10 +96,13 @@
       </section>
 
       <section id="tab-today" role="tabpanel"></section>
-      <section id="tab-page" role="tabpanel" hidden></section>
+      <!-- 2026-10-19k: the Day page and the calendar share the screen when split. -->
+      <div id="pair" hidden>
+        <section id="tab-page" role="tabpanel" hidden></section>
+        <section id="tab-calendar" role="tabpanel" hidden></section>
+      </div>
       <section id="tab-talk" role="tabpanel" hidden></section>
       <section id="tab-tasks" role="tabpanel" hidden></section>
-      <section id="tab-calendar" role="tabpanel" hidden></section>
       <section id="tab-notes" role="tabpanel" hidden></section>
       <section id="tab-rewards" role="tabpanel" hidden></section>
       <section id="tab-school" role="tabpanel" hidden></section>
