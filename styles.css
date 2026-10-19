@@ -844,3 +844,21 @@ button.page-task-name:hover { background: none; box-shadow: none; text-decoratio
 .page-cont { font-size: 0.78rem; color: var(--muted); padding: 2px 8px; border-radius: 6px; background: var(--soft); box-shadow: inset 3px 0 0 var(--subj, var(--accent)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .page-slot.gap .page-slot-body:has(.page-cont)::after { display: none; }
 @media (max-width: 819px) { .page-right { order: -1; } }
+
+/* 2026-10-19k: split view (Day page and calendar side by side), pop-out, hourly look. */
+#pair[hidden] { display: none; }
+body.split-view #pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+body.split-view #tab-page, body.split-view #tab-calendar { min-width: 0; }
+@media (max-width: 760px) { body.split-view #pair { grid-template-columns: minmax(0, 1fr); } }
+
+body.popout #side, body.popout #side-shade, body.popout header, body.popout #page-name { display: none !important; }
+body.popout #main { padding: 12px; }
+body.popout #app { max-width: none; }
+
+.look-toast {
+  position: fixed; right: 16px; bottom: 16px; z-index: 50;
+  max-width: 300px; padding: 14px 16px; border-radius: 14px;
+  background: var(--card, #fff); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+}
+.look-toast p { margin: 0 0 10px; }
+.look-toast-row { display: flex; gap: 8px; justify-content: flex-end; }
