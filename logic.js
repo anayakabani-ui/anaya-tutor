@@ -1375,7 +1375,12 @@ export function allDays(live) {
 // thing": hours down the side, timed lines and events where they fall,
 // lines with no time along the top, and it opens scrolled to the first
 // thing that has a time.
-export const HOUR_PX = 48;
+// 2026-10-19c: "option to zoom in on the timings so you can see it like each
+// individual half hour". The height of an hour changes with the zoom.
+export let HOUR_PX = 48;
+export const ZOOMS = [48, 96, 192];
+export function setHourPx(px) { HOUR_PX = ZOOMS.includes(Number(px)) ? Number(px) : 48; return HOUR_PX; }
+export const timeSnap = () => (HOUR_PX >= 192 ? 15 : 30);
 export const CAL_LAYOUTS = [["times", "Times"], ["list", "List"]];
 
 export const minutesOf = (hhmm) => {
@@ -1393,6 +1398,23 @@ export function timeParts(at) {
   if (start > 23 * 60 + 59 || (end !== null && (end <= start || end > 24 * 60))) return null;
   return { start, end };
 }
+// 2026-10-19: how a line reads on the calendar. "do 1 from [BIOLOGY] (1)"
+// reads "Do 1 from Biology (1)"; the line itself is never changed.
+export function lineLabel(text) {
+  const m = /^do 1 from \[([^\]]+)\](.*)$/i.exec(String(text || "").trim());
+  if (!m) return String(text || "");
+  const [list, sub] = m[1].split("/").map((x) => x.trim());
+  const name = /^dt$/i.test(list) ? "DT" : list.charAt(0).toUpperCase() + list.slice(1).toLowerCase();
+  const nice = name + (sub ? " / " + sub.toLowerCase() : "");
+  return "Do 1 from " + nice + m[2];
+}
+// 2026-10-19: "id also like to be able to just select an area and it would
+// select it". Which boxes a dragged-out area touches.
+export function boxHits(area, boxes) {
+  return (boxes || []).filter((b) => b.left < area.right && b.right > area.left &&
+    b.top < area.bottom && b.bottom > area.top);
+}
+
 export function timeSpan(start, end) {
   const s = Math.max(0, Math.min(23 * 60 + 45, Math.round(start)));
   const e = Math.max(s + 15, Math.min(24 * 60 - 1, Math.round(end)));
@@ -1408,7 +1430,7 @@ export const hhmm = (minutes) => {
   return String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
 };
 // A drop at this many pixels down the hours: to the half hour.
-export const dropTime = (y) => hhmm(Math.floor(Math.max(0, y) / (HOUR_PX / 2)) * 30);
+export const dropTime = (y) => hhmm(Math.floor(Math.max(0, y) / (HOUR_PX * timeSnap() / 60)) * timeSnap());
 
 // Times waiting to reach the laptop win over what it last said.
 export function mergedTimes(found, pending, nowMs) {
@@ -1437,16 +1459,29 @@ export function timeColumn(lines, day, times, events) {
     const end = Math.max(start + 30, minutesOf(e.end) || start + 60);
     timed.push({ kind: "event", event: e, start, end, label: e.title });
   });
-  timed.sort((a, b) => a.start - b.start);
-  // Side by side when they overlap.
-  const lanes = [];
+  timed.sort((a, b) => a.start - b.start || a.end - b.end);
+  // Side by side when they overlap. 2026-10-19: "idk what happened??" Two
+  // tasks at 5:30 made every task that day half as wide (names cut to
+  // "d..."). Now only the ones that really overlap share the width, like
+  // Google Calendar: each run of overlapping things has its own lanes.
+  let group = [], groupEnd = -1;
+  const settle = () => {
+    const lanes = [];
+    group.forEach((item) => {
+      let lane = lanes.findIndex((lastEnd) => lastEnd <= item.start);
+      if (lane < 0) { lane = lanes.length; lanes.push(0); }
+      lanes[lane] = item.end;
+      item.lane = lane;
+    });
+    group.forEach((item) => { item.lanes = Math.max(1, lanes.length); });
+    group = [];
+  };
   timed.forEach((item) => {
-    let lane = lanes.findIndex((lastEnd) => lastEnd <= item.start);
-    if (lane < 0) { lane = lanes.length; lanes.push(0); }
-    lanes[lane] = item.end;
-    item.lane = lane;
+    if (group.length && item.start >= groupEnd) settle();
+    group.push(item);
+    groupEnd = Math.max(groupEnd, item.end);
   });
-  timed.forEach((item) => { item.lanes = Math.max(1, lanes.length); });
+  if (group.length) settle();
   return { untimed, timed };
 }
 
@@ -1468,7 +1503,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v49";
+export const APP_VERSION = "v54";
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -1535,6 +1570,14 @@ export function bankTabs(lines) {
 
 // The line the "Do 1 from" card puts on a day. Ticked there, the laptop
 // asks which one she did, from the lines worth at least that much.
+// 2026-10-19c: "do one from geography but from sublists as well". A
+// sublist (a little heading in a subject) rides along after a "/":
+// "do 1 from [GEOGRAPHY / RIVERS]".
+export function pickName(subject, sub) {
+  const s = String(sub || "").trim();
+  return String(subject || "").trim() + (s ? " / " + s : "");
+}
+
 export function pickLine(name, least) {
   const n = Number(least) || 0;
   return "do 1 from [" + String(name || "").toUpperCase() + "]" + (n ? " (" + n + "+ min)" : "");
@@ -1669,19 +1712,34 @@ export function pickCount(found, day, text) {
   const d = ((found && found.days) || []).find((x) => x.day === day);
   return d ? d.lines.filter((l) => copyBase(l.text) === copyBase(text)).length : 0;
 }
-export function settlePicks(picks, found, nowMs) {
-  return (picks || []).filter((p) => nowMs - p.atMs <= 120000 && pickCount(found, p.to, p.text) <= p.had);
+// 2026-10-19c: how many lines with these words there are anywhere (every day
+// and the bank). A task added here, then moved before the laptop had it,
+// is settled once it's anywhere, so it never shows twice.
+export function totalCount(found, text) {
+  const lines = [].concat(...((found && found.days) || []).map((d) => d.lines), (found && found.bank) || []);
+  return lines.filter((l) => copyBase(l.text) === copyBase(text)).length;
 }
+export function settlePicks(picks, found, nowMs) {
+  return (picks || []).filter((p) => nowMs - p.atMs <= 120000 &&
+    (p.hadAll !== undefined ? totalCount(found, p.text) <= p.hadAll : pickCount(found, p.to, p.text) <= p.had));
+}
+// What the laptop keeps of a typed task: "[10]" on the end is its worth.
+export const typedWords = (text) => String(text || "").replace(/\s+/g, " ").trim().replace(/\s*\[\s*\d{1,3}\s*\]\s*$/, "").trim();
 export function withPicks(found, picks) {
   if (!found || !(picks || []).length) return found;
   const days = found.days.map((d) => ({ ...d, lines: d.lines.slice() }));
+  const bank = ((found && found.bank) || []).slice();
   picks.forEach((p) => {
+    if (p.to === BANK) {                   // 2026-10-19c: added to a bank list
+      bank.push({ text: p.text, done: false, optional: false, fun: false, bold: false, list: p.list || "", minutes: 0, group: "" });
+      return;
+    }
     let d = days.find((x) => x.day === p.to);
     if (!d) { d = { day: p.to, lines: [] }; days.push(d); }
     d.lines.push({ text: p.text, done: false, optional: false, fun: false, bold: false });
   });
   days.sort((a, b) => a.day.localeCompare(b.day));
-  return { ...found, days };
+  return { ...found, days, bank };
 }
 
 export function moveProblem(text, from, to, today) {
@@ -1891,13 +1949,14 @@ export function chatWaiting(waiting, chat) {
 
 // One cell a day: its lines, the tests on it and what's due on it.
 // most is how many lines a cell shows (0 for all); the rest are counted.
-export function calendarCells(days, found, moves, exams, tasks, today, most, swaps, locks) {
+export function calendarCells(days, found, moves, exams, tasks, today, most, swaps, locks, pending) {
   const now = isoDay(today);
   const held = locks || (found && found.locks) || new Set();
   const lists = withSwaps(withMoves(found, moves), swaps, held);
   const waiting = new Set((moves || []).map((m) => dayKey(m.to, m.text)));
   return days.map((day) => {
-    const real = dayLines(lists.get(day) || [], day).filter((l) => l.kind !== "gap");
+    // 2026-10-19c: a tick she's just made here shows at once (pending).
+    const real = dayLines(lists.get(day) || [], day, pending).filter((l) => l.kind !== "gap");
     // 2026-10-16b: "id like to see them on future days too, but in a diff
     // colour so i can tell". A repeat not yet on that day's own list.
     const have = new Set(real.map((l) => String(l.raw || l.text).trim().toLowerCase()));
