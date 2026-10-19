@@ -31,8 +31,8 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          TAB_GROUPS, TOP_TABS, tabName, tabOnTop, startTab, tabStep, lessonReal, autoPoints, overnightWords,
          rewardUse, rewardPiles,
          allDays, dayKey, dayLines, dayHead, allDaysCount, settleDays,
-         CAL_VIEWS, CAL_FEW, addMove, BANK, BANK_PICK, pickCount, settlePicks, withPicks, PICK_LEASTS, bankTabs, pickLine, withMoves, calendarDays,
-         HOUR_PX, CAL_LAYOUTS, clockWords, minutesOf, hhmm, timeParts, timeSpan, taskLength, dropTime, mergedTimes, timeColumn, firstScroll, scrollFloor, CAL_LOCK_HOUR, settleSwaps, swapSig, calendarStep, calendarTitle, calendarCells,
+         CAL_VIEWS, CAL_FEW, addMove, BANK, BANK_PICK, pickCount, settlePicks, withPicks, totalCount, typedWords, PICK_LEASTS, bankTabs, pickLine, withMoves, calendarDays,
+         HOUR_PX, ZOOMS, setHourPx, timeSnap, pickName, CAL_LAYOUTS, clockWords, minutesOf, hhmm, timeParts, timeSpan, taskLength, lineLabel, boxHits, dropTime, mergedTimes, timeColumn, firstScroll, scrollFloor, CAL_LOCK_HOUR, settleSwaps, swapSig, calendarStep, calendarTitle, calendarCells,
          moveProblem, settleMoves, notesIncoming, noteVersion,
          splitLine, parseChat, chatWaiting, APP_VERSION, nowScroll, eventAfterDrag,
          planCheck, repeatWords, subjectColour, eventColour, EVENT_COLOURS } from "./logic.js";
@@ -128,8 +128,11 @@ let cloud = null;                     // {db, base} once she's signed in
 async function sendEdit(edit) {
   if (!cloud) return false;
   try {
+    // 2026-10-19c: to the millisecond, so a task added and moved at once
+    // reaches the laptop in that order.
+    const now = new Date();
     await addDoc(collection(cloud.db, cloud.base + "edits"),
-                 { at: isoNow(new Date()), ...edit });
+                 { at: isoNow(now) + "." + String(now.getMilliseconds()).padStart(3, "0"), ...edit });
     await touchInbox();
     return true;
   } catch (error) {
@@ -622,6 +625,8 @@ function moveLine(pick, to) {
   state.calPick = null;
   if (problem) { state.calSaid = problem; drawCalendar(); return Promise.resolve(false); }
   state.moves = addMove(state.moves, { text: pick.text, from: pick.from, to, atMs: Date.now() });
+  remember("Move \u201c" + pick.text + "\u201d",                              // 2026-10-19b
+    () => moveLine({ text: pick.text, from: to }, pick.from), () => moveLine({ text: pick.text, from: pick.from }, to));
   state.calSaid = (to === BANK ? "Put in the bank" : "Moved to " + dayHead(to, now)) +
     ". The laptop takes it in a few seconds while the tutor is open.";
   drawCalendar();
@@ -638,6 +643,9 @@ function moveLine(pick, to) {
 
 // ---- 2026-10-16: the times view. A line put at a rough time, events.
 function sendTime(day, text, at) {
+  const was = mergedTimes(allDays(state.alldays), state.timesWaiting, Date.now())[day + "|" + text] || "";
+  if (was !== (at || "")) remember("Time of \u201c" + text + "\u201d",        // 2026-10-19b
+    () => sendTime(day, text, was), () => sendTime(day, text, at));
   state.timesWaiting = state.timesWaiting.filter((t) => Date.now() - t.atMs < 120000 && t.key !== day + "|" + text);
   state.timesWaiting.push({ key: day + "|" + text, at, atMs: Date.now() });
   state.calPick = null;
@@ -690,7 +698,7 @@ function subjectFor(line) {
   }
   words = words.trim().toLowerCase();
   if (subjectOfLine.has(words)) return subjectOfLine.get(words);
-  const pick = /^do 1 from \[([^\]]+)\]/i.exec(raw);
+  const pick = /^do 1 from \[([^\]/]+)/i.exec(raw);        // 2026-10-19c: not the "/ sublist"
   if (pick) return pick[1].trim();
   const head = /^([a-z& ]+):/i.exec(raw);
   if (head && subjectColour(head[1].trim())) return head[1].trim();
@@ -927,9 +935,9 @@ function eventPointer(block, item, day) {
 function addTaskBox(day, list) {
   const wrap = el("div", "add-task");
   const open = state.calAdding === (list ? "bank|" + list : day);
-  const waiting = state.addsWaiting.filter((w) => Date.now() - w.atMs < 120000 &&
-    (list ? w.list === list : w.day === day && !w.list));
-  waiting.forEach((w) => wrap.append(el("p", "plan-line adding", w.text)));
+  // 2026-10-19c: "id like to be able to add and move the tasks onto the
+  // calendar as soon as i put it down". A new task is a real line at once
+  // (faded till the laptop has it), so it can be dragged straight away.
   if (!open) {
     const plus = button(list ? "+ Add to " + list : "+ Add a task", "add-task-btn", () => {
       state.calAdding = list ? "bank|" + list : day; drawCalendar();
@@ -945,8 +953,11 @@ function addTaskBox(day, list) {
     const text = input.value.trim();
     state.calAdding = "";
     if (!text) { drawCalendar(); return; }
-    state.addsWaiting = state.addsWaiting.concat([{ day, list: list || "", text, atMs: Date.now() }]);
-    state.calSaid = "Added \u201c" + text + "\u201d. The laptop puts it in in a few seconds.";
+    const loaded = allDays(state.alldays);
+    const words = typedWords(text);
+    state.picksWaiting = state.picksWaiting.concat([{ text: words, to: list ? BANK : day, list: list || "",
+      had: pickCount(loaded, day, words), hadAll: totalCount(loaded, words), atMs: Date.now() }]);
+    state.calSaid = "Added \u201c" + words + "\u201d. You can drag it now; it's faded till the laptop has it.";
     drawCalendar();
     sendEdit(list ? { kind: "bank_add", text, list } : { kind: "day_add", day, text });
   };
@@ -1014,8 +1025,62 @@ function swapButton(cell) {
 }
 
 // Drops on the hours (a time) or along the top (no time).
+// 2026-10-19: "select an area and it would select it". Press on an empty
+// bit of the hours and drag out a box: every task it touches is picked (as
+// shift-click picks them), ready to repeat, bank or delete together. Hold
+// Shift to add to what's picked already.
+function boxSelect(col, wrap) {
+  col.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || event.target !== col) return;
+    const x0 = event.clientX, y0 = event.clientY;
+    const keep = event.shiftKey;
+    let mark = null;
+    const area = (ev) => ({ left: Math.min(x0, ev.clientX), right: Math.max(x0, ev.clientX),
+                            top: Math.min(y0, ev.clientY), bottom: Math.max(y0, ev.clientY) });
+    const move = (ev) => {
+      if (!mark && Math.abs(ev.clientX - x0) < 6 && Math.abs(ev.clientY - y0) < 6) return;
+      if (!mark) {
+        mark = el("div", "box-select");
+        document.body.append(mark);
+        state.dragging = true;              // no redraw under her hand
+      }
+      const a = area(ev);
+      Object.assign(mark.style, { left: a.left + "px", top: a.top + "px",
+        width: (a.right - a.left) + "px", height: (a.bottom - a.top) + "px" });
+      ev.preventDefault();
+    };
+    const up = (ev) => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      if (!mark) return;
+      mark.remove();
+      state.dragging = false;
+      state.calStale = false;
+      state.boxedAt = Date.now();          // not a click on the hours too
+      const nodes = [...wrap.querySelectorAll(".tg-item[data-raw], .plan-line[data-raw]")];
+      const hit = boxHits(area(ev), nodes.map((n) => {
+        const r = n.getBoundingClientRect();
+        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, day: n.dataset.day, raw: n.dataset.raw };
+      }));
+      const picked = keep ? state.calMulti.slice() : [];
+      hit.forEach((h) => {
+        const key = h.day + "|" + h.raw;
+        if (!picked.some((m) => m.key === key)) picked.push({ key, text: h.raw, from: h.day });
+      });
+      state.calMulti = picked;
+      state.calPick = null;
+      state.calSaid = hit.length ? "" : "Nothing in that box. Drag it over some tasks.";
+      drawCalendar();
+    };
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+  });
+}
+
 function timesDrop(target, day, onHours) {
   const at = (event) => dropTime(event.clientY - target.getBoundingClientRect().top);
+  target.dataset.pasteDay = day;               // 2026-10-19b: Ctrl+V lands here
+  if (onHours) target.dataset.pasteHours = "1";
   target.addEventListener("dragover", (event) => {
     if (!state.calDrag) return;
     event.preventDefault();
@@ -1040,6 +1105,7 @@ function timesDrop(target, day, onHours) {
   if (onHours) {
     // Picked, then pressed somewhere on the hours: there, at that time.
     target.addEventListener("click", (event) => {
+      if (Date.now() - (state.boxedAt || 0) < 400) return;     // 2026-10-19: a box, not a click
       if (event.target !== target || !state.calPick) return;
       placeAt(state.calPick, day, at(event));
     });
@@ -1113,7 +1179,12 @@ function timedBlock(item, day, past) {
   block.style.width = "calc(" + width + "% - 4px)";
   const when = clockWords(hhmm(item.start)) + (isEvent && item.event.end ? " to " + clockWords(item.event.end)
     : !isEvent && item.ranged ? " to " + clockWords(hhmm(item.end)) : "");
-  block.append(el("span", "tg-item-name", item.label), el("span", "tg-item-time", when));
+  block.append(el("span", "tg-item-name", isEvent ? item.label : lineLabel(item.label)), el("span", "tg-item-time", when));
+  if (item.lanes > 1) block.classList.add("narrow");        // 2026-10-19: the name first
+  if (!isEvent) {
+    block.dataset.day = day; block.dataset.raw = item.line.raw;
+    if ((state.calMulti || []).some((m) => m.key === day + "|" + item.line.raw)) block.classList.add("multi");
+  }
   if (!isEvent && item.line && item.line.locked) {      // 2026-10-16e
     block.classList.add("locked");
     block.prepend(icon("lock"));
@@ -1154,13 +1225,14 @@ function timedBlock(item, day, past) {
 
 function drawTimes(box, days, found, now, pick) {
   const nowMs = Date.now();
-  const cells = calendarCells(days, found, state.moves, state.exams, state.tasks, now, 0, state.swaps, locksNow(found));
+  const cells = calendarCells(days, found, state.moves, state.exams, state.tasks, now, 0, state.swaps, locksNow(found), state.pendingDays);
   const times = mergedTimes(found, state.timesWaiting, nowMs);
   const events = eventsNow(found, nowMs);          // 2026-10-17b: with her edits
   const cols = cells.map((cell) => ({ cell, ...timeColumn(cell.lines, cell.day, times, events) }));
   const wrap = el("div", "tg");
   wrap.style.setProperty("--days", String(days.length));
   wrap.style.setProperty("--hour", HOUR_PX + "px");
+  if (HOUR_PX > 48) wrap.classList.add("zoomed");           // 2026-10-19c
   const head = el("div", "tg-row tg-head");
   head.append(el("div", "tg-gutter"));
   cols.forEach(({ cell }) => {
@@ -1197,8 +1269,12 @@ function drawTimes(box, days, found, now, pick) {
   const scroll = el("div", "tg-scroll");
   const body = el("div", "tg-row tg-body");
   const labels = el("div", "tg-gutter tg-hours");
-  for (let h = 0; h < 24; h += 1) {
-    labels.append(el("div", "tg-hour", h ? clockWords(String(h).padStart(2, "0") + ":00") : ""));
+  // 2026-10-19c: zoomed in, every half hour (or quarter) has its label.
+  const per = HOUR_PX >= 192 ? 4 : HOUR_PX >= 96 ? 2 : 1;
+  for (let m = 0; m < 24 * 60; m += 60 / per) {
+    const lab = el("div", "tg-hour" + (m % 60 ? " part" : ""), m ? clockWords(hhmm(m)) : "");
+    if (per > 1) lab.style.height = (HOUR_PX / per) + "px";
+    labels.append(lab);
   }
   body.append(labels);
   cols.forEach(({ cell, timed }) => {
@@ -1211,6 +1287,7 @@ function drawTimes(box, days, found, now, pick) {
       col.append(line);
     }
     if (!cell.past) timesDrop(col, cell.day, true);
+    if (!cell.past) boxSelect(col, wrap);       // 2026-10-19
     body.append(col);
   });
   scroll.append(body);
@@ -1244,18 +1321,32 @@ function pickToDay(pick, to, at) {
   const problem = moveProblem(pick.text, BANK_PICK, to, now);
   if (problem) { state.calSaid = problem; drawCalendar(); return Promise.resolve(false); }
   // 2026-10-18f: it shows on the day (and at its hour) straight away.
-  const ghost = { text: pick.text, to, had: pickCount(allDays(state.alldays), to, pick.text), atMs: Date.now() };
-  state.picksWaiting = state.picksWaiting.concat([ghost]);
+  // 2026-10-19c: "do [x] from": x cards, half an hour apart on the hours.
+  const count = Math.max(1, Math.min(10, Number(pick.count) || 1));
+  const had = pickCount(allDays(state.alldays), to, pick.text);
+  // The names the laptop will give them ("(2)", "(3)" when there's one
+  // already), each at its own time, so the faded ones sit where they'll be.
+  const base = String(pick.text).replace(/\s\(\d+\)$/, "");
+  const nameOf = (i) => (had === 0 && count === 1 ? base : base + " (" + (had + i + 1) + ")");
+  const span = timeParts(at);
+  const length = span && span.end !== null ? span.end - span.start : 30;
+  const ghosts = Array.from({ length: count }, (_, i) => ({ text: nameOf(i), to, had: had + i, atMs: Date.now() }));
+  state.picksWaiting = state.picksWaiting.concat(ghosts);
   if (at) {
-    state.timesWaiting = state.timesWaiting.filter((t) => Date.now() - t.atMs < 120000 && t.key !== to + "|" + pick.text);
-    state.timesWaiting.push({ key: to + "|" + pick.text, at, atMs: Date.now() });
+    ghosts.forEach((g, i) => {
+      const s = (span ? span.start : minutesOf(at)) + i * length;
+      const when = span && span.end !== null ? timeSpan(s, s + length) : hhmm(s);
+      state.timesWaiting = state.timesWaiting.filter((t) => t.key !== to + "|" + g.text);
+      state.timesWaiting.push({ key: to + "|" + g.text, at: when, atMs: Date.now() });
+    });
   }
-  state.calSaid = "\u201c" + pick.text + "\u201d is on " + dayHead(to, now) + (at ? " at about " + clockWords(at) : "") +
-    ". It's faded till the laptop has it (a few seconds while the tutor is open).";
+  state.calSaid = (count > 1 ? count + " \u00d7 " : "") + "\u201c" + lineLabel(pick.text) + "\u201d " + (count > 1 ? "are" : "is") +
+    " on " + dayHead(to, now) + (at ? " from about " + clockWords(at) : "") +
+    ". Faded till the laptop has " + (count > 1 ? "them" : "it") + " (a few seconds while the tutor is open).";
   drawCalendar();
-  return sendEdit({ kind: "bank_pick", text: pick.text, from: BANK, to, time: at || "" }).then((sent) => {
+  return sendEdit({ kind: "bank_pick", text: pick.text, from: BANK, to, time: at || "", count }).then((sent) => {
     if (sent) return true;
-    state.picksWaiting = state.picksWaiting.filter((p) => p !== ghost);
+    state.picksWaiting = state.picksWaiting.filter((p) => !ghosts.includes(p));
     state.calSaid = "Couldn't send that. Are you online?";
     drawCalendar();
     return false;
@@ -1317,6 +1408,7 @@ function drawBank(box, found, pick) {
           gh.append(el("span", "fold-arrow" + (open ? " open" : ""), ""), el("span", "", group),
             el("span", "bank-count", String(j - i)));
           card.append(gh);
+          if (open) card.append(pickCard(pickName(tab.name, group), true));    // 2026-10-19c
           if (open) card.append(target);
         }
         for (let k = i; k < j; k++) {
@@ -1332,6 +1424,7 @@ function drawBank(box, found, pick) {
     }
     grid.append(card);
   });
+  if (tabs.length) grid.prepend(generalPick(tabs));       // 2026-10-19c
   if (tabs.length) bankBox.append(grid);
   calDrop(bankBox, BANK, pick);
   box.append(bankBox);
@@ -1339,25 +1432,29 @@ function drawBank(box, found, pick) {
 
 // "complete a task from [list] (optional if minimum worth x mins)": drag
 // it onto a day (or press it, then Move here). The least is optional.
-function pickCard(name) {
-  const least = state.bankLeast[name] || "0";
+function pickCard(name, compact, count) {
+  const least = compact ? "0" : state.bankLeast[name] || "0";
   const text = pickLine(name, least);
-  const card = el("div", "bank-pick");
-  const picked = state.calPick && state.calPick.from === BANK_PICK && state.calPick.text === text;
-  const go = el("button", "plan-line bank-pick-line" + (picked ? " picked" : ""), "Do 1 from " + name);
+  const n = Math.max(1, Number(count) || 1);
+  const card = el("div", "bank-pick" + (compact ? " small" : ""));
+  const picked = state.calPick && state.calPick.from === BANK_PICK && state.calPick.text === text &&
+    (Number(state.calPick.count) || 1) === n;
+  const label = compact ? "Do 1 from here" : "Do " + n + " from " + lineLabel("do 1 from [" + name + "]").replace(/^Do 1 from /, "");
+  const go = el("button", "plan-line bank-pick-line" + (picked ? " picked" : ""), label);
   go.type = "button";
-  if (subjectColour(name)) { go.classList.add("subj"); go.style.setProperty("--subj", subjectColour(name)); }
+  const tint = subjectColour(String(name).split("/")[0].trim());        // 2026-10-19c: a sublist too
+  if (tint) { go.classList.add("subj"); go.style.setProperty("--subj", tint); }
   go.draggable = true;
   go.title = "Drag onto a day: that day gets \u201c" + text + "\u201d. Tick it there and the tutor asks which one you did.";
   go.setAttribute("aria-pressed", String(Boolean(picked)));
   go.addEventListener("click", () => {
-    state.calPick = picked ? null : { text, from: BANK_PICK };
+    state.calPick = picked ? null : { text, from: BANK_PICK, count: n };
     state.calSaid = "";
     drawCalendar();
   });
   go.addEventListener("dragstart", (event) => {
     state.dragging = true;
-    state.calDrag = { text, from: BANK_PICK };
+    state.calDrag = { text, from: BANK_PICK, count: n };
     event.dataTransfer.effectAllowed = "copy";
     event.dataTransfer.setData("text/plain", text);
   });
@@ -1367,6 +1464,7 @@ function pickCard(name) {
     document.querySelectorAll(".plan-day.over").forEach((d) => d.classList.remove("over"));
     if (state.calStale) { state.calStale = false; drawCalendar(); }
   });
+  if (compact) { go.title = "Drag onto a day: \u201c" + lineLabel(text) + "\u201d. Ticked there, the tutor asks which one from this list you did."; card.append(go); return card; }
   card.append(go, chipRow("bank-least", "At least worth", PICK_LEASTS, least, (value) => {
     state.bankLeast = { ...state.bankLeast, [name]: value };
     drawCalendar();
@@ -1374,9 +1472,62 @@ function pickCard(name) {
   return card;
 }
 
+// 2026-10-19c: "a general next to task bank that have drop downs for do [x]
+// from [subjectname] and [list- optional]". One card at the front of the
+// bank: how many, which subject, which of its little lists (or any). Drag
+// it (or press it, then a day) like any "Do 1 from" card.
+function generalPick(tabs) {
+  const card = el("section", "bank-sub bank-general");
+  card.append(el("p", "bank-sub-name", "Do some from\u2026"));
+  const names = tabs.map((t) => t.name);
+  const g = state.genPick = Object.assign({ n: 1, list: names[0] || "", sub: "" }, state.genPick || {});
+  if (!names.includes(g.list)) { g.list = names[0] || ""; g.sub = ""; }
+  const tab = tabs.find((t) => t.name === g.list);
+  const subs = [...new Set(((tab && tab.lines) || []).map((l) => String(l.group || "").trim()).filter(Boolean))];
+  if (!subs.includes(g.sub)) g.sub = "";
+  const pickOne = (label, values, current, onPick) => {
+    const s = document.createElement("select");
+    s.setAttribute("aria-label", label);
+    s.title = label;
+    values.forEach(([v, w]) => { const o = el("option", "", w); o.value = v; if (String(v) === String(current)) o.selected = true; s.append(o); });
+    s.addEventListener("change", () => { onPick(s.value); keep("tutor-gen-pick", state.genPick); drawCalendar(); });
+    return s;
+  };
+  const row = el("div", "gen-row");
+  row.append(el("span", "muted", "Do"),
+    pickOne("How many", [1, 2, 3, 4, 5].map((v) => [v, String(v)]), g.n, (v) => { g.n = Number(v) || 1; }),
+    el("span", "muted", "from"),
+    pickOne("Subject", names.map((v) => [v, v]), g.list, (v) => { g.list = v; g.sub = ""; }));
+  card.append(row);
+  if (subs.length) {
+    const row2 = el("div", "gen-row");
+    row2.append(el("span", "muted", "list"), pickOne("Which list in it (optional)", [["", "Any"]].concat(subs.map((v) => [v, v])), g.sub, (v) => { g.sub = v; }));
+    card.append(row2);
+  }
+  if (g.list) {
+    const one = pickCard(pickName(g.list, g.sub), true, g.n);
+    one.classList.remove("small");
+    const b = one.querySelector("button");
+    b.textContent = "Do " + g.n + " from " + lineLabel(pickLine(pickName(g.list, g.sub), 0)).replace(/^Do 1 from /, "");
+    b.title = "Drag onto a day (or an hour): " + g.n + (g.n > 1 ? " cards" : " card") + ". Ticked there, the tutor asks which one you did.";
+    card.append(one);
+  }
+  const colour = subjectColour(g.list);
+  if (colour) { card.classList.add("subj"); card.style.setProperty("--subj", colour); }
+  return card;
+}
+
 // One line on the calendar or in the bank: drag it, or press it to pick it.
 function calLine(line, dayId, past, pick) {
   const head = line.kind === "head";
+  // 2026-10-19c: "no option on website to say a task is done either". A done
+  // line can be pressed to untick it.
+  if (line.done && !past && !line.sub && !head && dayId !== BANK) {
+    const done = button(lineLabel(line.text), "plan-line done", () => markDone(dayId, line.raw, false));
+    done.title = "Done. Press to untick it.";
+    applySubject(done, line);
+    return done;
+  }
   if (deleting(dayId, line.raw)) {                    // 2026-10-18e
     const gone = el("p", "plan-line deleting", (line.sub ? "> " : "") + line.text);
     gone.title = "Deleting. The laptop takes it off in a few seconds.";
@@ -1391,6 +1542,11 @@ function calLine(line, dayId, past, pick) {
     (line.sub ? "> " : "") + line.text);
   if (line.locked) item.prepend(icon("lock"));
   if (!line.head) applySubject(item, line);      // 2026-10-18b
+  if (!head && !line.sub) {                      // 2026-10-19
+    if (item.firstChild && item.firstChild.nodeType === 3) item.firstChild.textContent = lineLabel(line.text);
+    else if (item.lastChild && item.lastChild.nodeType === 3) item.lastChild.textContent = lineLabel(line.text);
+    if (can && dayId !== BANK) { item.dataset.day = dayId; item.dataset.raw = line.raw; }
+  }
   if (line.repeat) item.title = "Comes back every day. It lands on this day's list on the day.";
   if (!can) return item;
   item.type = "button";
@@ -1429,6 +1585,7 @@ function calLine(line, dayId, past, pick) {
 
 // A day (or the bank) that a line can be dropped on.
 function calDrop(target, dayId, pick) {
+  if (dayId !== BANK) target.dataset.pasteDay = dayId;    // 2026-10-19b: Ctrl+V lands here
   target.addEventListener("dragover", (event) => {
     if (!state.calDrag || state.calDrag.from === dayId) return;
     if (state.calDrag.from === BANK_PICK && dayId === BANK) return;   // 2026-10-16m
@@ -1559,7 +1716,7 @@ function multiBar() {
   const n = state.calMulti.length;
   const wrap = el("div", "multi-wrap");
   const row = el("div", "plan-bar multi-bar");
-  row.append(el("p", "plan-title", n + (n === 1 ? " task" : " tasks") + " picked. Shift-click to add more."));
+  row.append(el("p", "plan-title", n + (n === 1 ? " task" : " tasks") + " picked. Shift-click or drag a box to add more."));
   row.append(button("Repeat them", "", () => { state.calMultiRepeat = !state.calMultiRepeat; drawCalendar(); }));
   row.append(button("Put them in the bank", "quiet", () => {
     const picked = state.calMulti.filter((m) => m.from !== BANK);
@@ -1569,7 +1726,36 @@ function multiBar() {
     picked.forEach((m) => moveLine({ text: m.text, from: m.from }, BANK));
     drawCalendar();
   }));
-  row.append(button("Clear", "quiet", () => { state.calMulti = []; state.calMultiRepeat = false; drawCalendar(); }));
+  // 2026-10-19c: tick them all off.
+  const md = button("Mark done", "", () => {
+    const picked = state.calMulti.filter((m) => m.from !== BANK && m.from !== BANK_PICK);
+    state.calMulti = [];
+    picked.forEach((m) => markDone(m.from, m.text, true, true));
+    remember("Tick " + picked.length + " tasks", () => picked.forEach((m) => markDone(m.from, m.text, false, true)),
+      () => picked.forEach((m) => markDone(m.from, m.text, true, true)));
+    state.calSaid = "Ticked off " + picked.length + (picked.length === 1 ? " task." : " tasks.");
+    drawCalendar();
+  });
+  md.prepend(icon("tick"));
+  row.append(md);
+  // 2026-10-19: delete the picked ones together (asks once).
+  const sure = state.calMultiDelete;
+  const del = button(sure ? "Yes, delete " + (n === 1 ? "it" : "all " + n) : "Delete them", sure ? "danger" : "quiet", () => {
+    if (!sure) { state.calMultiDelete = true; drawCalendar(); return; }
+    const picked = state.calMulti.filter((m) => m.from !== BANK && m.from !== BANK_PICK);
+    state.calMulti = [];
+    state.calMultiDelete = false;
+    picked.forEach((m) => deleteLine(m.from, m.text));
+    state.calSaid = "Deleted " + picked.length + (picked.length === 1 ? " task" : " tasks") +
+      ". The laptop takes them off in a few seconds while the tutor is open.";
+    drawCalendar();
+  });
+  del.prepend(icon("bin"));
+  row.append(del);
+  row.append(button(sure ? "Keep them" : "Clear", "quiet", () => {
+    if (sure) { state.calMultiDelete = false; drawCalendar(); return; }
+    state.calMulti = []; state.calMultiRepeat = false; state.calMultiDelete = false; drawCalendar();
+  }));
   wrap.append(row);
   if (state.calMultiRepeat) wrap.append(multiRepeatForm());
   return wrap;
@@ -1689,6 +1875,17 @@ function locksNow(found) {
 }
 
 // 2026-10-18e: delete a task off its day. The "> bits" under it go too.
+// 2026-10-19c: tick a task off (or back on) from the calendar, the same way
+// the Tasks page does.
+function markDone(day, text, done, quiet) {
+  if (!quiet) remember((done ? "Tick " : "Untick ") + "\u201c" + text + "\u201d",
+    () => markDone(day, text, !done, true), () => markDone(day, text, done, true));
+  tickDay({ day, raw: text, done: !done });
+  state.calPick = null;
+  if (!quiet) state.calSaid = (done ? "Ticked off \u201c" : "Unticked \u201c") + lineLabel(text) + "\u201d.";
+  drawCalendar();
+}
+
 function askDelete(pick) {
   state.calDelete = dayKey(pick.from, pick.text);
   state.calSaid = "Delete \u201c" + pick.text + "\u201d off " + dayHead(pick.from, new Date()) + "?";
@@ -1696,6 +1893,9 @@ function askDelete(pick) {
 }
 function deleteLine(day, text) {
   const key = dayKey(day, text);
+  const hadTime = mergedTimes(allDays(state.alldays), state.timesWaiting, Date.now())[key] || "";
+  remember("Delete \u201c" + text + "\u201d",                                  // 2026-10-19b
+    () => putBack(day, text, hadTime), () => deleteLine(day, text));
   state.delWaiting.set(key, Date.now());
   state.calDelete = null;
   state.calPick = null;
@@ -1712,6 +1912,153 @@ function deleting(day, text) {
   const at = state.delWaiting.get(dayKey(day, text));
   return Boolean(at) && Date.now() - at < 120000;
 }
+
+// ---- 2026-10-19b: "i also want shortcuts like ctrl c,v, and z/x/y etc to
+// work". On the calendar, with tasks picked (pressed, shift-clicked or boxed):
+// Ctrl+C copies them, Ctrl+X cuts them, Ctrl+V puts them on the day (and
+// hour) the mouse is over, Delete asks to delete them, Esc lets go. Ctrl+Z
+// undoes what was last done here (a move, a time, a pull, a delete, a
+// paste) and Ctrl+Y (or Ctrl+Shift+Z) does it again. Never while typing.
+const undoStack = [], redoStack = [];
+let replaying = false;
+function remember(words, undo, redo) {
+  if (replaying) return;
+  undoStack.push({ words, undo, redo });
+  if (undoStack.length > 50) undoStack.shift();
+  redoStack.length = 0;
+}
+function replay(from, to, doing) {
+  const step = from.pop();
+  if (!step) { state.calSaid = doing === "undo" ? "Nothing to undo." : "Nothing to redo."; drawCalendar(); return; }
+  replaying = true;
+  try { (doing === "undo" ? step.undo : step.redo)(); } finally { replaying = false; }
+  to.push(step);
+  state.calSaid = (doing === "undo" ? "Undone: " : "Done again: ") + step.words + ".";
+  drawCalendar();
+}
+function putBack(day, text, at) {
+  // still showing (the laptop hasn't taken it off yet): it counts as gone.
+  const still = deleting(day, text) ? 1 : 0;
+  state.delWaiting.delete(dayKey(day, text));
+  const ghost = { text, to: day, had: Math.max(0, pickCount(allDays(state.alldays), day, text) - still), atMs: Date.now() };
+  state.picksWaiting = state.picksWaiting.concat([ghost]);
+  sendEdit({ kind: "day_add", day, text });
+  if (at) sendEdit({ kind: "line_time", day, text, time: at });
+}
+let calClip = null;
+let pointerAt = { x: -1, y: -1 };
+document.addEventListener("pointermove", (event) => { pointerAt = { x: event.clientX, y: event.clientY }; }, { passive: true });
+function pickedNow() {
+  if (state.calMulti.length) return state.calMulti.map((m) => ({ text: m.text, from: m.from }));
+  return state.calPick && state.calPick.from !== BANK_PICK && !state.calPick.repeat
+    ? [{ text: state.calPick.text, from: state.calPick.from }] : [];
+}
+function pasteSpot() {
+  const under = document.elementsFromPoint(pointerAt.x, pointerAt.y).find((n) => n.dataset && n.dataset.pasteDay);
+  if (!under) return null;
+  const at = under.dataset.pasteHours ? dropTime(pointerAt.y - under.getBoundingClientRect().top) : "";
+  return { day: under.dataset.pasteDay, at };
+}
+function pasteLines(lines, cut) {
+  const spot = pasteSpot();
+  if (!spot) { state.calSaid = "Point the mouse at a day (or an hour), then press Ctrl+V."; drawCalendar(); return; }
+  const now = isoDay(new Date());
+  if (spot.day < now) { state.calSaid = "That day's gone, so nothing can go on it."; drawCalendar(); return; }
+  const found = allDays(state.alldays);
+  const added = [];
+  lines.forEach((l) => {
+    if (cut && l.from) {
+      if (l.from === spot.day) { if (spot.at) sendTime(spot.day, l.text, spot.at); return; }
+      replaying = true;                     // one undo step for the lot, below
+      try { if (spot.at) placeAt({ text: l.text, from: l.from }, spot.day, spot.at); else moveLine({ text: l.text, from: l.from }, spot.day); }
+      finally { replaying = false; }
+      added.push(l);
+      return;
+    }
+    state.picksWaiting = state.picksWaiting.concat([{ text: l.text, to: spot.day, had: pickCount(found, spot.day, l.text), atMs: Date.now() }]);
+    sendEdit({ kind: "day_add", day: spot.day, text: l.text });
+    if (spot.at) {
+      state.timesWaiting.push({ key: spot.day + "|" + l.text, at: spot.at, atMs: Date.now() });
+      sendEdit({ kind: "line_time", day: spot.day, text: l.text, time: spot.at });
+    }
+    added.push(l);
+  });
+  if (!added.length) { drawCalendar(); return; }
+  const n = added.length;
+  const what = (cut ? "Moved " : "Pasted ") + (n === 1 ? "\u201c" + added[0].text + "\u201d" : n + " tasks");
+  remember(what, cut
+    ? () => added.forEach((l) => moveLine({ text: l.text, from: spot.day }, l.from))
+    : () => added.forEach((l) => deleteLine(spot.day, l.text)),
+  () => pasteBack(added, cut, spot));
+  state.calMulti = [];
+  state.calPick = null;
+  state.calSaid = what + " on " + dayHead(spot.day, new Date()) + (spot.at ? " at about " + clockWords(spot.at) : "") +
+    ". It's faded till the laptop has it (a few seconds while the tutor is open).";
+  drawCalendar();
+}
+function pasteBack(lines, cut, spot) {
+  lines.forEach((l) => {
+    if (cut) { if (spot.at) placeAt({ text: l.text, from: l.from }, spot.day, spot.at); else moveLine({ text: l.text, from: l.from }, spot.day); return; }
+    sendEdit({ kind: "day_add", day: spot.day, text: l.text });
+    if (spot.at) sendEdit({ kind: "line_time", day: spot.day, text: l.text, time: spot.at });
+  });
+}
+function calendarShortcut(event) {
+  if ($("tab-calendar").hidden || typingInCalendar()) return;
+  const active = document.activeElement;
+  if (active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)) return;
+  const ctrl = event.ctrlKey || event.metaKey;
+  const key = event.key.toLowerCase();
+  if (ctrl && key === "z" && !event.shiftKey) { event.preventDefault(); replay(undoStack, redoStack, "undo"); return; }
+  if (ctrl && (key === "y" || (key === "z" && event.shiftKey))) { event.preventDefault(); replay(redoStack, undoStack, "redo"); return; }
+  if (ctrl && (key === "c" || key === "x")) {
+    const picked = pickedNow().filter((p) => p.from !== BANK);
+    if (!picked.length) return;            // nothing picked: the browser's own copy
+    event.preventDefault();
+    calClip = { lines: picked, cut: key === "x", text: picked.map((p) => p.text).join("\n") };
+    try { navigator.clipboard.writeText(calClip.text).catch(() => {}); } catch (error) { /* fine */ }
+    state.calSaid = (key === "x" ? "Cut " : "Copied ") + (picked.length === 1 ? "\u201c" + picked[0].text + "\u201d" : picked.length + " tasks") +
+      ". Point at a day or an hour and press Ctrl+V.";
+    drawCalendar();
+    return;
+  }
+  if (ctrl && key === "enter") {          // 2026-10-19c: tick them off
+    const picked = pickedNow().filter((p) => p.from !== BANK);
+    if (!picked.length) return;
+    event.preventDefault();
+    if (picked.length === 1) markDone(picked[0].from, picked[0].text, true);
+    else { state.calMulti = []; picked.forEach((p) => markDone(p.from, p.text, true, true));
+      remember("Tick " + picked.length + " tasks", () => picked.forEach((p) => markDone(p.from, p.text, false, true)),
+        () => picked.forEach((p) => markDone(p.from, p.text, true, true)));
+      state.calSaid = "Ticked off " + picked.length + " tasks."; drawCalendar(); }
+    return;
+  }
+  if ((key === "delete" || key === "backspace") && !ctrl) {
+    const picked = pickedNow();
+    if (!picked.length) return;
+    event.preventDefault();
+    if (state.calMulti.length) { state.calMultiDelete = true; drawCalendar(); }
+    else askDelete(state.calPick);
+  }
+}
+document.addEventListener("keydown", calendarShortcut);
+// Ctrl+V: what she copied here, or lines copied from anywhere else (each
+// line one task).
+document.addEventListener("paste", (event) => {
+  if ($("tab-calendar").hidden) return;
+  const active = document.activeElement;
+  if (active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)) return;
+  const text = (event.clipboardData && event.clipboardData.getData("text")) || "";
+  event.preventDefault();
+  if (calClip && (!text || text.trim() === calClip.text.trim())) {
+    const clip = calClip;
+    if (clip.cut) calClip = null;          // a cut is pasted once
+    pasteLines(clip.lines, clip.cut);
+    return;
+  }
+  const lines = text.split(/\r?\n/).map((t) => t.trim()).filter(Boolean).slice(0, 30).map((t) => ({ text: t.slice(0, 300) }));
+  if (lines.length) pasteLines(lines, false);
+});
 
 function lockLine(day, text, locked) {
   const key = dayKey(day, text);
@@ -1741,6 +2088,9 @@ function icon(name) {
     unlock: ["M4.5 7.5h7v6h-7z", "M6 7.5V5.5a2 2 0 0 1 3.8-.9"],
     sliders: ["M2.5 4.5h11", "M2.5 8h11", "M2.5 11.5h11", "M5.5 3v3", "M10.5 6.5v3", "M7 10v3"],
     plus: ["M8 3v10", "M3 8h10"],
+    tick: ["M3.5 8.5l3 3 6-7"],      // 2026-10-19c
+    zoomin: ["M7 3a4 4 0 1 0 0 8a4 4 0 1 0 0-8", "M10 10l3.5 3.5", "M5 7h4", "M7 5v4"],   // 2026-10-19c
+    zoomout: ["M7 3a4 4 0 1 0 0 8a4 4 0 1 0 0-8", "M10 10l3.5 3.5", "M5 7h4"],
     bin: ["M3 4.5h10", "M6.5 4.5V3h3v1.5", "M4.5 4.5l.7 8.5h5.6l.7-8.5", "M7 7v4", "M9 7v4"],   // 2026-10-18e
   }[name] || [];
   paths.forEach((d) => {
@@ -1755,6 +2105,23 @@ function icon(name) {
   });
   return svg;
 }
+
+function zoomHours(by) {
+  const at = ZOOMS.indexOf(HOUR_PX);
+  const next = ZOOMS[Math.max(0, Math.min(ZOOMS.length - 1, (at < 0 ? 0 : at) + by))];
+  if (next === HOUR_PX) return;
+  const topMinutes = (state.calScrollTop || 0) / HOUR_PX * 60;   // keep the same time at the top
+  setHourPx(next);
+  keep("tutor-cal-zoom", String(next));
+  state.calScrollTop = Math.round(topMinutes / 60 * next);
+  state.calSaid = next === 48 ? "Whole hours." : next === 96 ? "Zoomed in: every half hour." : "Zoomed in: every quarter hour.";
+  drawCalendar();
+}
+document.addEventListener("wheel", (event) => {
+  if (!(event.ctrlKey || event.metaKey) || !event.target.closest || !event.target.closest(".tg-scroll")) return;
+  event.preventDefault();
+  zoomHours(event.deltaY < 0 ? 1 : -1);
+}, { passive: false });
 
 function iconButton(name, tip, onClick, pressed) {
   const b = button("", "icon-btn", onClick);
@@ -1839,6 +2206,9 @@ function drawCalendar() {
   const tools = el("div", "plan-tools");
   const hours = state.calLayout === "times" && state.calView !== "month";
   if (hours) {
+    // 2026-10-19c: zoom the hours in and out (Ctrl + mouse wheel on them works too).
+    tools.append(iconButton("zoomout", "Zoom out", () => zoomHours(-1), false),
+      iconButton("zoomin", HOUR_PX >= 192 ? "Zoomed in all the way (quarter hours)" : "Zoom in: see every half hour", () => zoomHours(1), HOUR_PX > 48));
     tools.append(iconButton(state.calHoursLocked ? "lock" : "unlock",
       state.calHoursLocked ? "Hours locked at 5am: press to scroll to midnight"
         : "Hours unlocked: press to lock them at 5am", () => {
@@ -1879,7 +2249,8 @@ function drawCalendar() {
   if (!bar.dataset.more) box.append(bar);
   if (state.calEventForm) box.append(eventForm(days, now));
   const pick = state.calPick;
-  const said = el("p", "muted plan-said", pick
+  // 2026-10-19b: what she was just told wins over "Moving ..." (Copied, Delete ...?).
+  const said = el("p", "muted plan-said", pick && !state.calSaid
     ? "Moving \u201c" + pick.text + "\u201d. Press Move here on a day, or press it again to leave it."
     : state.calSaid || (state.calLayout === "times" && state.calView !== "month"
       ? "Drag a task onto an hour for a rough time, onto another day, or into the bank. Or press it, then press where it goes."
@@ -1908,6 +2279,10 @@ function drawCalendar() {
       sb.title = "Makes it " + parts.n + " separate tasks: \u201c" + parts.one + "\u201d";
       row.append(sb);
     }
+    const tb = button("Done", "", () => markDone(pick.from, pick.text, true));     // 2026-10-19c
+    tb.prepend(icon("tick"));
+    tb.title = "Tick it off (Ctrl+Enter)";
+    row.prepend(tb);
     const rb = button("Repeat", "quiet", () => {
       state.calRepeat = state.calRepeat ? null : { text: pick.text, from: pick.from };
       drawCalendar();
@@ -1940,7 +2315,7 @@ function drawCalendar() {
   }
   const grid = el("div", "plan-grid " + state.calView);
   const cells = calendarCells(days, found, state.moves, state.exams, state.tasks, now,
-                              state.calView === "month" ? 4 : (state.calFew || 0), state.swaps, locksNow(found));
+                              state.calView === "month" ? 4 : (state.calFew || 0), state.swaps, locksNow(found), state.pendingDays);
   const swap = state.calSwap;
   cells.forEach((cell) => {
     const day = el("section", "plan-day" + (cell.past ? " past" : "") + (cell.today ? " today" : "") +
@@ -3288,11 +3663,15 @@ function start() {
   state.calFew = Number(recall("tutor-cal-few", "0")) || 0;
   state.calHidePast = recall("tutor-cal-hide-past", false) === true;     // 2026-10-18c
   state.calHoursLocked = recall("tutor-cal-hours-lock", "1") !== "0";   // 2026-10-16e
+  setHourPx(Number(recall("tutor-cal-zoom", "48")) || 48);                // 2026-10-19c
+  { const g = recall("tutor-gen-pick", null); if (g && typeof g === "object") state.genPick = g; }
   state.bankTab = String(recall("tutor-bank-tab", "") || "");          // 2026-10-16m
   try { state.bankShut = new Set(recall("tutor-bank-shut", []) || []); } catch (e) { state.bankShut = new Set(); }
   try { state.bankGroupsOpen = new Set(recall("tutor-bank-groups", []) || []); } catch (e) { state.bankGroupsOpen = new Set(); }
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && state.calPick) { state.calPick = null; drawCalendar(); }
+    if (event.key === "Escape" && (state.calPick || state.calMulti.length)) {
+      state.calPick = null; state.calMulti = []; state.calMultiDelete = false; drawCalendar();
+    }
   });
   setInterval(drawTimer, 1000);
   $("timer-pause").addEventListener("click", () => {
