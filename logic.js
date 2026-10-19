@@ -1367,7 +1367,9 @@ export function allDays(live) {
   // leaves them where they are.
   const locks = new Set((Array.isArray(held.locks) ? held.locks : []).map(String)
     .filter((k) => /^\d{4}-\d{2}-\d{2}\|/.test(k)));
-  return { today: String(held.today || ""), days, bank: bank.filter((l) => !l.planned),
+  // 2026-10-19d: her flexible days.
+  const flex = new Set((Array.isArray(held.flex) ? held.flex : []).map(String).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)));
+  return { today: String(held.today || ""), days, flex, bank: bank.filter((l) => !l.planned),
            planned: bank.filter((l) => l.planned), goals, times, events, repeats, locks };
 }
 
@@ -1378,9 +1380,9 @@ export function allDays(live) {
 // 2026-10-19c: "option to zoom in on the timings so you can see it like each
 // individual half hour". The height of an hour changes with the zoom.
 export let HOUR_PX = 48;
-export const ZOOMS = [48, 96, 192];
+export const ZOOMS = [32, 48, 72, 96, 144, 192, 288];   // 2026-10-19d: more sizes
 export function setHourPx(px) { HOUR_PX = ZOOMS.includes(Number(px)) ? Number(px) : 48; return HOUR_PX; }
-export const timeSnap = () => (HOUR_PX >= 192 ? 15 : 30);
+export const timeSnap = () => (HOUR_PX >= 144 ? 15 : 30);
 export const CAL_LAYOUTS = [["times", "Times"], ["list", "List"]];
 
 export const minutesOf = (hhmm) => {
@@ -1413,6 +1415,20 @@ export function lineLabel(text) {
 export function boxHits(area, boxes) {
   return (boxes || []).filter((b) => b.left < area.right && b.right > area.left &&
     b.top < area.bottom && b.bottom > area.top);
+}
+
+// 2026-10-19d: "+30" on a day, shown at once: every task with a time on
+// that day (from \`from\` minutes on), not ticked, that much later.
+export function shiftTimes(times, day, minutes, from, done) {
+  const out = {};
+  Object.keys(times || {}).forEach((key) => {
+    if (!key.startsWith(day + "|") || (done && done.has(key))) return;
+    const p = timeParts(times[key]);
+    if (!p || p.start < (from || 0)) return;
+    const s = Math.max(0, Math.min(23 * 60 + 45, p.start + minutes));
+    out[key] = p.end !== null ? timeSpan(s, s + (p.end - p.start)) : hhmm(s);
+  });
+  return out;
 }
 
 export function timeSpan(start, end) {
@@ -1503,7 +1519,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v54";
+export const APP_VERSION = "v55";
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
