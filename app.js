@@ -3746,7 +3746,7 @@ page.smart = (() => { const s = recall("tutor-smart", null);
     start: /^\d{4}-\d{2}-\d{2}$/.test(String(s.start || "")) ? s.start : smartDefaults(new Date()).start,
     light: Array.isArray(s.light) ? s.light : smartDefaults(new Date()).light,
     gone: s.gone && typeof s.gone === "object" ? s.gone : {}, said: "" } : null; })();
-function smartSave() { keep("tutor-smart", page.smart); }
+function smartSave() { keep("tutor-smart", page.smart ? { ...page.smart, busy: false } : null); }
 
 function pageDayNow() {
   const today = isoDay(new Date());
@@ -4247,27 +4247,51 @@ function pageSmartCard(found) {
     card.append(box);
   });
   const go = el("div", "smart-actions");
-  if (plan.changes) go.append(button("Set it up", "", () => smartApply(plan)));
+  if (plan.changes) {
+    const setUp = button(s.busy ? "Setting it up..." : "Set it up", "", () => smartApply(plan));
+    setUp.disabled = Boolean(s.busy);   // 2026-10-19s: one press only
+    go.append(setUp);
+  }
   go.append(button("Back", "quiet", () => { s.view = "ask"; smartSave(); drawPage(); }),
             button("Close", "quiet", () => { page.smart = null; smartSave(); drawPage(); }));
   card.append(go);
   return card;
 }
 
+// 2026-10-19s: "set it up seems to be unresponsive". Each step is two trips
+// to the cloud, one after another, and nothing showed till the end. Now it
+// says how far it's got straight away, a second press does nothing, and a
+// step that hangs or breaks is skipped after 8 seconds instead of stopping it.
 async function smartApply(plan) {
+  const s = page.smart;
+  if (!s || s.busy) return;
+  const todo = plan.steps.filter((st) => st.act !== "keep");
+  s.busy = true;
   let sent = 0;
-  for (const st of plan.steps) {
-    if (st.act === "keep") continue;
+  let done = 0;
+  const failed = [];
+  const tell = () => { s.said = "Setting it up: " + done + " of " + todo.length + ". Keep this page open."; drawPage(); };
+  tell();
+  const within = (p) => Promise.race([Promise.resolve(p), new Promise((r) => setTimeout(() => r("slow"), 8000))]);
+  for (const st of todo) {
     let ok = false;
-    if (st.act === "add") ok = await sendEdit({ kind: "day_add", day: st.day, text: st.text });
-    else if (st.from === "bank") ok = await (st.pick ? pickToDay({ text: st.text, from: BANK_PICK }, st.day) : moveLine({ text: st.text, from: BANK }, st.day));
-    else ok = await moveLine({ text: st.text, from: st.from }, st.day);
-    if (ok) sent += 1;
+    try {
+      if (st.act === "add") ok = await within(sendEdit({ kind: "day_add", day: st.day, text: st.text }));
+      else if (st.from === "bank") ok = await within(st.pick ? pickToDay({ text: st.text, from: BANK_PICK }, st.day) : moveLine({ text: st.text, from: BANK }, st.day));
+      else ok = await within(moveLine({ text: st.text, from: st.from }, st.day));
+    } catch (error) {
+      console.log("[smart] step failed", st.text, error);
+      ok = false;
+    }
+    if (ok === true || ok === "slow") sent += 1; else failed.push(st.text);
+    done += 1;
+    tell();
   }
   page.smart = null;
   smartSave();
-  page.said = sent ? "Smart plan's set up: " + sent + " " + (sent === 1 ? "change" : "changes") +
-    ". The laptop takes them in a few seconds while the tutor is open." : "Couldn't send the plan. Are you online?";
+  page.said = (sent ? "Smart plan's set up: " + sent + " " + (sent === 1 ? "change" : "changes") +
+    ". The laptop takes them in a few seconds while the tutor is open." : "Couldn't send the plan. Are you online?") +
+    (failed.length ? " Didn't go: " + failed.join(", ") + "." : "");
   drawPage();
 }
 
