@@ -416,6 +416,26 @@ export function doneEvents(history, bounds) {
   return [...state.values()];
 }
 
+// 2026-10-19n: "timeblocks sohuld fill in AFTER i finish that hour to show
+// what i did in that hour taskwise like praying namaz, eeating". What was
+// ticked off on that day, by half hour (minutes from midnight), up to now.
+export function pageDoneBySlot(history, day, nowMs) {
+  const from = new Date(day + "T00:00:00").getTime();
+  const to = Math.min(new Date(day + "T23:59:59").getTime(), nowMs);
+  const out = {};
+  if (isNaN(from) || to < from) return out;
+  doneEvents(history, { from, to }).forEach((h) => {
+    const d = new Date(h.at);
+    const m = d.getHours() * 60 + d.getMinutes();
+    const slot = m - (m % 30);
+    const text = String(h.text || "").trim();
+    if (!text) return;
+    out[slot] = out[slot] || [];
+    if (!out[slot].includes(text)) out[slot].push(text);
+  });
+  return out;
+}
+
 // which: "main" or "today". Newest day first, newest first inside a day.
 export function historyDays(history, which, search) {
   const want = String(search || "").trim().toLowerCase();
@@ -1520,7 +1540,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v60";
+export const APP_VERSION = "v61";
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -2037,6 +2057,7 @@ export function notesIncoming(box, snap, nowMs) {
 export const PAGE_FROM_HOUR = 7;
 export const PAGE_TO_HOUR = 23;
 export const PAGE_MOST_HABITS = 5;
+export const PAGE_MOST_STARS = 3;    // 2026-10-19n: "id like to add a few north stars"
 export const PAGE_HABIT_IDEAS = ["Read 20 pages", "Exercise", "Outside 20 mins", "Water", "No phone in bed"];
 
 export function pageData(raw) {
@@ -2046,7 +2067,19 @@ export function pageData(raw) {
     Object.keys(d.habits).forEach((k) => { if (d.habits[k]) habits[k] = true; });
   }
   const dots = (n) => Math.max(0, Math.min(5, Math.round(Number(n) || 0)));
-  return { star: String(d.star || "").trim(), starDone: Boolean(d.starDone), habits,
+  // 2026-10-19n: up to PAGE_MOST_STARS North Stars. A page saved with one
+  // (star, starDone) still reads as that one.
+  let stars = Array.isArray(d.stars)
+    ? d.stars.map((s) => ({ text: String((s && s.text) || "").trim(), done: Boolean(s && s.done) })) : [];
+  if (!stars.length && String(d.star || "").trim()) stars = [{ text: String(d.star).trim(), done: Boolean(d.starDone) }];
+  const seenStar = new Set();
+  stars = stars.filter((s) => {
+    const k = s.text.toLowerCase();
+    if (!s.text || seenStar.has(k)) return false;
+    seenStar.add(k);
+    return true;
+  }).slice(0, PAGE_MOST_STARS);
+  return { star: stars.length ? stars[0].text : "", starDone: stars.length ? stars[0].done : false, stars, habits,
            mood: dots(d.mood), prod: dots(d.prod), notes: String(d.notes || ""),
            urgent: Array.isArray(d.urgent) ? d.urgent.map(String) : [] };
 }
