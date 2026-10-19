@@ -1341,6 +1341,7 @@ function timesDrop(target, day, onHours) {
     state.dragging = false; state.calDrag = null; state.calStale = false;
     if (!held) return;
     if (held.event) { eventDropped(held.event, day, onHours ? at(event) : ""); return; }   // 2026-10-18
+    if (held.many) { moveMany(held, day); return; }    // 2026-10-19l: all the picked ones come along
     if (onHours) { placeAt(held, day, at(event)); return; }
     if (held.from !== day) { moveLine(held, day); return; }
     if (held.timed) sendTime(day, held.text, "");
@@ -1458,6 +1459,7 @@ function timedBlock(item, day, past) {
   block.addEventListener("dragstart", (event) => {
     state.dragging = true;
     state.calDrag = { text: raw, from: day, timed: true };
+    state.calDrag.many = dragAll(state.calDrag);       // 2026-10-19l
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", raw);
     block.classList.add("dragged");
@@ -1830,6 +1832,7 @@ function calLine(line, dayId, past, pick) {
     if (line.repeat) { event.preventDefault(); return; }
     state.dragging = true;
     state.calDrag = { text: line.raw, from: dayId };
+    state.calDrag.many = dragAll(state.calDrag);       // 2026-10-19l
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", line.raw);
     item.classList.add("dragged");
@@ -1863,7 +1866,8 @@ function calDrop(target, dayId, pick) {
     const held = state.calDrag;
     state.dragging = false; state.calDrag = null; state.calStale = false;
     if (held && held.event) { if (dayId !== BANK) eventDropped(held.event, dayId, ""); return; }   // 2026-10-18
-    if (held) moveLine(held, dayId);
+    if (held && held.many) moveMany(held, dayId);      // 2026-10-19l
+    else if (held) moveLine(held, dayId);
   });
   if (pick && !pick.repeat && pick.from !== dayId && !(pick.from === BANK_PICK && dayId === BANK)) {
     target.append(button(dayId === BANK ? "Put in the bank" : "Move here", "plan-here", () => moveLine(pick, dayId)));
@@ -1960,6 +1964,24 @@ function splitPicked(pick, parts) {
   state.calSaid = "Splitting into " + parts.n + " \u00d7 \u201c" + parts.one + "\u201d. The laptop does it in a few seconds.";
   drawCalendar();
   return sendEdit({ kind: "line_split", day: pick.from, text: pick.text, n: parts.n, one: parts.one });
+}
+
+// 2026-10-19l: drag one of the picked tasks and the rest come with it.
+function dragAll(held) {
+  if (!held || !state.calMulti || !state.calMulti.length) return null;
+  if (!state.calMulti.some((m) => m.key === held.from + "|" + held.text)) return null;
+  const picked = state.calMulti.filter((m) => m.from !== BANK && m.from !== BANK_PICK);
+  return picked.length ? picked.map((m) => ({ text: m.text, from: m.from })) : null;
+}
+
+// 2026-10-19l: several picked tasks dropped on one day, together.
+function moveMany(held, dayId) {
+  const list = (held.many || []).filter((m) => m.from !== dayId);
+  state.calMulti = [];
+  state.calMultiRepeat = false;
+  state.calSaid = "Moving " + list.length + (list.length === 1 ? " task" : " tasks") + ".";
+  list.forEach((m) => moveLine(m, dayId));
+  drawCalendar();
 }
 
 // 2026-10-18c: shift-click several tasks, then repeat them or bank them.
