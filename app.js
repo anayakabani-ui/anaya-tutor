@@ -641,6 +641,16 @@ function moveLine(pick, to) {
     drawCalendar();
     return Promise.resolve(false);
   }
+  // 2026-10-19m: "what the FLIP is this". A "Do 1 from [Geography]" card
+  // put in the bank landed in Other as a task. The card only points at its
+  // list, which is in the bank already, so it comes off the day instead.
+  if (to === BANK && /^do 1 from \[/i.test(String(pick.text || "").trim())) {
+    return Promise.resolve(deleteLine(pick.from, pick.text)).then(() => {
+      state.calSaid = "That card just points at its list, and the list's already in the bank, so it's off the day now.";
+      drawCalendar();
+      return true;
+    });
+  }
   const now = new Date();
   const problem = moveProblem(pick.text, pick.from, to, now);
   state.calPick = null;
