@@ -1540,7 +1540,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v74";   // 2026-10-20i: was v73
+export const APP_VERSION = "v75";   // 2026-10-20j: was v74
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -2677,4 +2677,42 @@ export function nowPickPrio(lines, prio, chosen) {
   const cols = nowColumns(lines, prio);
   for (const key of ["have", "want", "should", "ideally"]) if (cols[key].length) return cols[key][0];
   return null;
+}
+
+
+// ---- 2026-10-20j: "so clearly it didnt work it out. even tho i literally said
+// BIO". A chat called "bio test1 quizzing" went into Other: the guess only read
+// the pasted text (a link) and only knew whole names ("Biology"). This reads
+// the title too and knows the short ones (bio, chem, geo, dt, eng ...).
+export function guessSubjectLoose(text, names) {
+  const list = (names || []).filter(Boolean);
+  const whole = guessSubject(text, list);
+  if (whole) return whole;
+  const tokens = String(text || "").toLowerCase().replace(/[^a-z&\s]/g, " ").split(/\s+/).filter(Boolean);
+  for (let i = 0; i < tokens.length; i++) {
+    const two = i + 1 < tokens.length ? tokens[i] + " " + tokens[i + 1] : "";
+    const key = (two && SMART_ALIASES[two]) || SMART_ALIASES[tokens[i]] || (SUBJECT_HEX[tokens[i]] ? tokens[i] : "");
+    if (!key) continue;
+    const hit = list.find((n) => smartSubjectKey(n) === key);
+    if (hit) return hit;
+    return key === "dt" ? "DT" : key[0].toUpperCase() + key.slice(1);
+  }
+  return "";
+}
+// Text split into plain bits and links, for showing a link you can press.
+export function linkParts(text) {
+  const out = [];
+  const re = /\bhttps?:\/\/[^\s<>"']+/gi;
+  let last = 0;
+  let m;
+  const s = String(text || "");
+  while ((m = re.exec(s))) {
+    let url = m[0].replace(/[).,;:!?]+$/, "");
+    if (m.index > last) out.push({ text: s.slice(last, m.index) });
+    out.push({ text: url, href: url });
+    last = m.index + url.length;
+    re.lastIndex = last;
+  }
+  if (last < s.length) out.push({ text: s.slice(last) });
+  return out;
 }
