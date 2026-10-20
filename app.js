@@ -37,7 +37,7 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          splitLine, parseChat, chatWaiting, APP_VERSION, nowScroll, eventAfterDrag,
          planCheck, repeatWords, subjectColour, eventColour, EVENT_COLOURS,
          pageData, pageHabits, pageSlots, pageGaps, longerBy, pageSteps, carryList, PAGE_MOST_HABITS, PAGE_HABIT_IDEAS, PAGE_MOST_STARS, pageDoneBySlot,
-         smartItems, smartPlan, smartDefaults, smartLeftovers } from "./logic.js";   // 2026-10-19o: smart plan
+         smartItems, smartPlan, smartDefaults, smartLeftovers, smartReadWords, smartLevelOf, smartSubjectKey, SMART_LEVELS } from "./logic.js";   // 2026-10-19o: smart plan
 
 const $ = (id) => document.getElementById(id);
 // 2026-10-18b: a line's subject, by its words, from the bank's subject lists.
@@ -1461,7 +1461,10 @@ function timedBlock(item, day, past) {
   block.draggable = true;
   block.title = "Drag to another time or day. Drag it to the top to take its time off. Pull its bottom to make it longer.";
   taskPull(block, item, day);                // 2026-10-19
-  block.addEventListener("click", () => {
+  block.addEventListener("click", (ev) => {
+    // 2026-10-20c: "i cant MASS DRAG STUFF". Shift or Ctrl click picks several
+    // on the hours too; drag one of them and they all come.
+    if ((ev.shiftKey || ev.ctrlKey || ev.metaKey) && item.line && !item.line.repeat) { state.calInfo = null; toggleMulti(raw, day); return; }
     state.calPick = picked ? null : { text: raw, from: day, timed: true };
     state.calSaid = "";
     state.calInfo = picked ? null : { day, raw, line: item.line, timed: true, start: item.start, end: item.end,
@@ -1838,7 +1841,7 @@ function calLine(line, dayId, past, pick) {
   if ((state.calMulti || []).some((m) => m.key === dayId + "|" + line.raw)) item.classList.add("multi");
   item.addEventListener("click", (ev) => {
     // 2026-10-18c: shift-click picks several at once (to repeat or bank them).
-    if (ev.shiftKey && !line.repeat) { toggleMulti(line.raw, dayId); return; }
+    if ((ev.shiftKey || ev.ctrlKey || ev.metaKey) && !line.repeat) { toggleMulti(line.raw, dayId); return; }   // 2026-10-20c: Ctrl too
     state.calPick = picked ? null : { text: line.raw, from: dayId, repeat: Boolean(line.repeat) };
     state.calDelete = null;
     state.calSaid = "";
@@ -2238,6 +2241,45 @@ function replay(from, to, doing) {
   state.calSaid = (doing === "undo" ? "Undone: " : "Done again: ") + step.words + ".";
   drawCalendar();
 }
+// 2026-10-20c: "it doesnt even have i can quickly make another task what im
+// doing now bc sometimes i have to reply again". A line on today, starting
+// now, as long as she picks (15 minutes unless she says).
+let doingNowMins = 15;
+function doingNowRow(done) {
+  const row = el("div", "doing-now");
+  const input = document.createElement("input");
+  input.placeholder = "What are you doing right now? (e.g. reply to Jaya again)";
+  input.setAttribute("aria-label", "What you're doing right now");
+  const lengths = el("div", "doing-now-len");
+  [5, 10, 15, 30, 45, 60].forEach((m) => {
+    const chip = button(m + " min", "smart-chip" + (m === doingNowMins ? " on" : ""), () => {
+      doingNowMins = m;
+      lengths.querySelectorAll(".smart-chip").forEach((c) => c.classList.toggle("on", c === chip));
+      input.focus();
+    });
+    lengths.append(chip);
+  });
+  const add = () => {
+    const text = input.value.trim().slice(0, 160);
+    if (!text) { input.focus(); return; }
+    const now = new Date();
+    const day = isoDay(now);
+    const start = Math.floor((now.getHours() * 60 + now.getMinutes()) / 5) * 5;
+    const at = timeSpan(start, start + doingNowMins);
+    state.timesWaiting = state.timesWaiting.filter((t) => t.key !== day + "|" + text);
+    state.timesWaiting.push({ key: day + "|" + text, at, atMs: Date.now() });
+    putBack(day, text, at);
+    const words = "\u201c" + text + "\u201d is on today from " + clockWords(hhmm(start)) + " for " + doingNowMins + " minutes.";
+    state.calSaid = words;
+    page.said = words;
+    done();
+  };
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); add(); } });
+  row.append(input, lengths, button("Add", "", add));
+  setTimeout(() => input.focus(), 0);
+  return row;
+}
+
 function putBack(day, text, at) {
   // still showing (the laptop hasn't taken it off yet): it counts as gone.
   const still = deleting(day, text) ? 1 : 0;
@@ -2310,7 +2352,7 @@ function calendarShortcut(event) {
   const active = document.activeElement;
   if (active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)) return;
   const ctrl = event.ctrlKey || event.metaKey;
-  const key = event.key.toLowerCase();
+  const key = String(event.key || "").toLowerCase();   // 2026-10-20c: Chrome's autofill sends a keydown with no key
   if (ctrl && key === "z" && !event.shiftKey) { event.preventDefault(); replay(undoStack, redoStack, "undo"); return; }
   if (ctrl && (key === "y" || (key === "z" && event.shiftKey))) { event.preventDefault(); replay(redoStack, undoStack, "redo"); return; }
   if (ctrl && (key === "c" || key === "x")) {
@@ -2482,7 +2524,10 @@ function drawCalendar() {
     if (!words || words.startsWith(">") || !subjectColour(list)) return;
     subjectOfLine.set(words.toLowerCase(), list);
   });
-  const anchor = state.calAnchor || isoDay(now);
+  // 2026-10-20c: "i cant see monday or sunday this week". With past days
+  // shown, a week (or two) starts on this week's Sunday.
+  const weekStart = addDayIso(isoDay(now), -now.getDay());
+  const anchor = state.calAnchor || (!state.calHidePast && (state.calView === "week" || state.calView === "two") ? weekStart : isoDay(now));
   const inView = calendarDays(anchor, state.calView);
   // 2026-10-18c: "an option to hide past days". If every day in view has
   // gone, they're shown anyway so there's something to look at.
@@ -2527,7 +2572,10 @@ function drawCalendar() {
       () => { state.calMore = !state.calMore; drawCalendar(); }, state.calMore),
     iconButton("plus", "Add an event (restaurant, meeting, birthday)",
       () => { state.calEventForm = !state.calEventForm; drawCalendar(); }, state.calEventForm));
-  bar.append(back, todayBtn, on, el("p", "plan-title", calendarTitle(days, state.calView, anchor)), views, tools);
+  // 2026-10-20c: "i can quickly make another task what im doing now".
+  const nowBtn = button(state.nowOpen ? "Close" : "+ Doing now", "quiet doing-now-go", () => { state.nowOpen = !state.nowOpen; drawCalendar(); });
+  nowBtn.title = "Put what you're doing right now on today, at this time";
+  bar.append(back, todayBtn, on, el("p", "plan-title", calendarTitle(days, state.calView, anchor)), views, nowBtn, tools);
   if (state.calMore) {
     const more = el("div", "plan-bar plan-more");
     if (state.calView !== "month") {
@@ -2552,6 +2600,7 @@ function drawCalendar() {
     bar.dataset.more = "1";
   }
   if (!bar.dataset.more) box.append(bar);
+  if (state.nowOpen) box.append(doingNowRow(() => { state.nowOpen = false; drawCalendar(); }));   // 2026-10-20c
   if (state.calEventForm) box.append(eventForm(days, now));
   const pick = state.calPick;
   // 2026-10-19b: what she was just told wins over "Moving ..." (Copied, Delete ...?).
@@ -4158,7 +4207,10 @@ function pageSmartCard(found) {
   // Done already is kept for good on this device, not just for one plan.
   const goneForGood = recall("tutor-smart-gone", {});
   const items = smartItems(found, state.tasks, state.exams, subjectNames(), now)
-    .filter((it) => !s.gone[it.key] && !goneForGood[it.key]);   // 2026-10-19q
+    .filter((it) => !s.gone[it.key] && !goneForGood[it.key])   // 2026-10-19q
+    // 2026-10-20c: a task's subject from the bank's lists too, so subjects can be balanced.
+    .map((it) => ({ ...it, subject: it.subject || subjectFor({ text: it.text }) || it.list || "" }));
+  if (!s.prefs) s.prefs = recall("tutor-smart-prefs", { subjects: {}, words: {}, said: "" });
   const card = el("div", "page-card smart-card");
   card.append(el("span", "page-label", "Smart plan"));
   if (s.said) card.append(el("p", "page-said", s.said));
@@ -4232,6 +4284,7 @@ function pageSmartCard(found) {
     }));
     card.append(dl);
     card.append(knobs());
+    card.append(smartPrefsBox(s, items));                       // 2026-10-20c
     if (!items.length) { card.append(el("p", "muted", "Nothing to plan. Your days and the bank are empty.")); return card; }
     const list = el("div", "smart-list");
     items.forEach((raw) => {
@@ -4243,8 +4296,12 @@ function pageSmartCard(found) {
       head.append(button("Done already", "quiet smart-done", () => doneAlready(it)));
       row.append(head);
       // 2026-10-20b: "which tasks are ok not to do": If there's time goes in only once the musts fit.
-      row.append(smartChips("Needed?", [[true, "Must do"], ["maybe", "If there's time"], [false, "No"]], it.must, (v) => setA(it, { must: v })));
-      if (it.must !== false) {
+      const lvl = smartLevelOf(it, s.prefs);
+      const fromSubject = (s.answers[it.key] || {}).must === undefined && lvl !== "normal";
+      const shown = fromSubject ? (lvl === "skip" ? false : true) : it.must;
+      row.append(smartChips("Needed?", [[true, "Must do"], ["maybe", "If there's time"], [false, "No"]], shown, (v) => setA(it, { must: v })));
+      if (fromSubject) row.append(el("p", "muted smart-q-hint", "From your subjects: " + (SMART_LEVELS.find((l) => l[0] === lvl) || ["", lvl])[1]));
+      if (shown !== false) {
         row.append(smartChips("What is it?", [["hw", "Homework"], ["test", "Test"], ["other", "Other"]], it.kind, (v) => setA(it, { kind: v })));
         if (it.kind === "test") {
           row.append(smartChips("Confident?", [["yes", "Yes"], ["kinda", "Kinda"], ["no", "No"]], it.confident, (v) => setA(it, { confident: v })));
@@ -4272,7 +4329,7 @@ function pageSmartCard(found) {
   if (!Array.isArray(s.skip)) s.skip = [];
   const plan = smartPlan(items, s.answers, found, now, s.deadline,
     { start: s.start, light: s.light, budget: s.budget, dayStart: s.dayStart, dayEnd: s.dayEnd, spread: s.spread,
-      piece: s.piece, timeAll: s.timeAll, skip: s.skip, nowMin: now.getHours() * 60 + now.getMinutes() });
+      piece: s.piece, timeAll: s.timeAll, skip: s.skip, prefs: s.prefs, nowMin: now.getHours() * 60 + now.getMinutes() });
   page.smartPlanNow = plan;
   const fresh = plan.steps.filter((st) => st.act === "add" || st.act === "move").length;
   const timed = plan.steps.filter((st) => st.act === "time" && st.at).length;
@@ -4282,6 +4339,7 @@ function pageSmartCard(found) {
   if (plan.late.length) card.append(el("p", "smart-late", "Already past the date: " + plan.late.join(", ") + ". They're on the first day."));
   if (plan.unplaced.length) card.append(el("p", "smart-late", "Won't fit before the deadline: " + plan.unplaced.join(", ") +
     ". Give yourself more time a day, shorter pieces, a later deadline, or make some “If there's time”."));
+  if (plan.later && plan.later.length) card.append(el("p", "smart-later", "A bit a day, carried on after the deadline: " + plan.later.join(", ") + "."));
   if (s.skip.length) card.append(button("Put back the " + s.skip.length + " you took out", "quiet", () => set({ skip: [] })));
   Object.keys(plan.days).sort().forEach((day) => {
     const box = el("div", "smart-day");
@@ -4313,6 +4371,48 @@ function pageSmartCard(found) {
             button("Close", "quiet", () => { page.smart = null; smartSave(); drawPage(); }));
   card.append(go);
   return card;
+}
+
+// 2026-10-20c: her subjects and her words. She types what matters ("i HAVE
+// to revise bio, english a bit a day") and presses Read it; each subject's
+// chips show what it understood and she can change any.
+function smartPrefsBox(s, items) {
+  const box = el("div", "smart-prefs");
+  box.append(el("span", "page-label", "What matters"));
+  const words = el("textarea", "smart-words");
+  words.placeholder = "Say it like you would to a friend: \u201cI HAVE to revise bio and finish all of DT. I should do physics. English a bit a day. Geo case study soonish. I have to do my Seneca.\u201d";
+  words.value = s.prefs.said || "";
+  words.setAttribute("aria-label", "What matters this week");
+  const save = () => { keep("tutor-smart-prefs", s.prefs); smartSave(); drawPage(); };
+  const read = button("Read it", "", () => {
+    const got = smartReadWords(words.value, items);
+    s.prefs = { subjects: { ...s.prefs.subjects, ...got.subjects }, words: { ...s.prefs.words, ...got.words }, said: words.value };
+    const names = Object.keys(got.subjects).concat(Object.keys(got.words));
+    s.said = names.length ? "Got it: " + names.map((n) => n + " " + ((SMART_LEVELS.find((l) => l[0] === (got.subjects[n] || got.words[n])) || ["", ""])[1]).toLowerCase()).join(", ") + "."
+      : "I couldn't find a subject in that. Try \u201cI have to do bio\u201d.";
+    save();
+  });
+  box.append(words, read);
+  const keys = [...new Set(["biology", "chemistry", "physics", "maths", "english", "french", "geography", "dt", "business"]
+    .concat(items.map((it) => smartSubjectKey(it.subject)).filter((k) => subjectColour(k))))]
+    .filter((k) => items.some((it) => smartSubjectKey(it.subject) === k) || s.prefs.subjects[k]);
+  const list = el("div", "smart-subjects");
+  keys.forEach((k) => {
+    const row = smartChips(k === "dt" ? "DT" : k[0].toUpperCase() + k.slice(1), [["normal", "Normal"]].concat(SMART_LEVELS),
+      s.prefs.subjects[k] || "normal", (v) => { s.prefs.subjects = { ...s.prefs.subjects, [k]: v }; save(); });
+    row.classList.add("smart-subject");
+    const colour = subjectColour(k);
+    if (colour) { row.classList.add("subj"); row.style.setProperty("--subj", colour); }
+    list.append(row);
+  });
+  Object.keys(s.prefs.words || {}).forEach((w) => {
+    const row = smartChips("\u201c" + w + "\u201d", [["normal", "Normal"]].concat(SMART_LEVELS), s.prefs.words[w],
+      (v) => { s.prefs.words = { ...s.prefs.words, [w]: v }; save(); });
+    list.append(row);
+  });
+  box.append(list);
+  box.append(el("p", "muted smart-q-hint", "Every subject that isn\u2019t \u201cNot now\u201d gets something every day it has work. Must comes up most. A bit a day is one piece a day."));
+  return box;
 }
 
 // 2026-10-20: the clean-up for what an earlier smart plan piled on her days.
@@ -4471,6 +4571,8 @@ function drawPage() {
   if (!isPopout()) bar.append(button("Pop out", "quiet page-popout", () => {
     window.open(location.pathname + "?pop=page", "tutor-day", "popup,width=440,height=800");
   }));
+  // 2026-10-20c: Doing now.
+  bar.append(button(page.nowOpen ? "Close" : "+ Doing now", "quiet doing-now-go", () => { page.nowOpen = !page.nowOpen; drawPage(); }));
   // 2026-10-19o: smart plan.
   bar.append(button(page.smart ? "Close smart plan" : "Smart plan", "page-smart-go", () => {
     page.smart = page.smart ? null : { view: "ask", answers: {}, ...smartDefaults(new Date()), gone: {}, said: "" };   // 2026-10-19r
@@ -4480,6 +4582,7 @@ function drawPage() {
   bar.querySelectorAll(".page-step")[0].setAttribute("aria-label", "Day before");
   bar.querySelectorAll(".page-step")[1].setAttribute("aria-label", "Day after");
   box.append(bar);
+  if (page.nowOpen) box.append(doingNowRow(() => { page.nowOpen = false; drawPage(); }));   // 2026-10-20c
   if (!found) { box.append(el("p", "muted", "Waiting for the laptop. Open the tutor and your days show up here.")); return; }
   const leftovers = smartCleanCard(found);                          // 2026-10-20
   if (leftovers) box.append(leftovers);
@@ -4635,6 +4738,10 @@ function selectTab(key, focus) {
   if (popout) key = "page";
   const name = tabName(key);
   if (!name) return;
+  // 2026-10-20c: "i cant have the day plan as full screen until i click split
+  // then i click just the page". Coming to the Day page from another page
+  // always opens it full width; Split view is only while she's on it.
+  if (key === "page" && state.tab !== "page") page.split = false;
   state.tab = key;
   if (key === "talk") setTimeout(talkToBottom, 0);     // 2026-10-18
   document.querySelectorAll(TAB_BUTTONS).forEach((other) => {
