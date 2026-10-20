@@ -4160,7 +4160,7 @@ function pageBlocksCard(day, lines, times, events) {
     const before = el("div", "page-did-early");
     before.append(el("span", "page-slot-time", "Earlier"));
     const list = el("div", "page-slot-body");
-    early.forEach((m) => did[m].forEach((t) => list.append(el("div", "page-did", "\u2713 " + lineLabel(t) + "  " + hhmm(m)))));
+    early.forEach((m) => did[m].forEach((t) => list.append(el("div", "page-did", "\u2713 " + lineLabel(t) + "  " + clockWords(hhmm(m))))));
     before.append(list);
     grid.append(before);
   }
@@ -4168,14 +4168,14 @@ function pageBlocksCard(day, lines, times, events) {
     const ticked = over(m) ? (did[m] || []) : [];
     const slot = el("div", "page-slot" + (isToday && nowMin >= m && nowMin < m + 30 ? " now" : "") +
       (gaps.has(m) && !ticked.length ? " gap" : "") + (page.held ? " droppable" : ""));
-    slot.append(el("span", "page-slot-time", hhmm(m)));
+    slot.append(el("span", "page-slot-time", clockWords(hhmm(m))));
     const body = el("div", "page-slot-body");
     ticked.forEach((t) => body.append(el("div", "page-did", "\u2713 " + lineLabel(t))));
     col.timed.filter((t) => t.start >= m && t.start < m + 30).forEach((t) => {
       if (t.kind === "event") {
         const chip = el("div", "page-block event");
         if (t.event.color) chip.style.setProperty("--subj", t.event.color);
-        chip.append(el("span", "grow", t.label), el("span", "page-block-when", hhmm(t.start) + "–" + hhmm(t.end)));
+        chip.append(el("span", "grow", t.label), el("span", "page-block-when", clockWords(hhmm(t.start)) + " to " + clockWords(hhmm(t.end))));
         body.append(chip);
         return;
       }
@@ -4200,7 +4200,7 @@ function pageBlocksCard(day, lines, times, events) {
         page.chip = open ? null : line.raw;
         drawPage();
       });
-      chip.append(tick, name, el("span", "page-block-when", hhmm(t.start) + "–" + hhmm(t.end)));
+      chip.append(tick, name, el("span", "page-block-when", clockWords(hhmm(t.start)) + " to " + clockWords(hhmm(t.end))));
       body.append(chip);
       if (open) {
         const tools = el("div", "page-block-tools");
@@ -4277,7 +4277,7 @@ function pageTaskList(day, lines, times) {
     const name = button(lineLabel(line.text), "page-task-name", () => { if (!line.done) pageHold(line); });
     item.append(tick, name);
     const p = timeParts(at);
-    item.append(el("span", "page-task-when", p ? hhmm(p.start) : line.done ? "" : "no time"));
+    item.append(el("span", "page-task-when", p ? clockWords(hhmm(p.start)) : line.done ? "" : "no time"));
     if ((pageOf(day).stars || []).some((s) => s.text === line.raw)) item.append(el("span", "page-star-icon small", "★"));
     list.append(item);
   });
@@ -5124,7 +5124,8 @@ function hourlyLook() {
   keep("tutor-look-hour", hour);
   const card = el("div", "look-toast");
   card.setAttribute("role", "status");
-  card.append(el("p", "", "It's " + hhmm(now.getHours() * 60 + now.getMinutes()) + ". Look at your day. What's next?"));
+  // 2026-10-20i: "I USE AM/PM".
+  card.append(el("p", "", "It's " + clockWords(hhmm(now.getHours() * 60 + now.getMinutes())) + ". Look at your day. What's next?"));
   const row = el("div", "look-toast-row");
   row.append(button("Open my day", "quiet", () => { selectTab("page"); card.remove(); }),
              button("Later", "quiet", () => card.remove()));
