@@ -1540,7 +1540,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v72";   // 2026-10-20g: was v71
+export const APP_VERSION = "v73";   // 2026-10-20h: was v72
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -2646,4 +2646,35 @@ export function treatProgress(rule, doneTexts) {
   const done = (doneTexts || []).map((t) => String(t).trim().toLowerCase());
   if (rule.kind === "count") return Math.min(rule.n, done.length) + " of " + rule.n;
   return done.includes(rule.task.toLowerCase()) ? "done" : "not yet";
+}
+
+
+// ---- 2026-10-20h: "im using it as like ideally, should try to do, want to
+// do and have to do - left being basically least essetnail and right being
+// most". The Now card's columns are how much it matters, not the time of
+// day. Kept per day in pages/<day> {prio: {line: level}}; a line she hasn't
+// placed sits in "Should try to do".
+export const NOW_PRIOS = [["ideally", "Ideally"], ["should", "Should try to do"], ["want", "Want to do"], ["have", "Have to do"]];
+export const NOW_PRIO_DEFAULT = "should";
+function nowLive(lines) {
+  return (lines || []).filter((l) => l && l.kind === "line" && !l.done && !l.repeat &&
+    !String(l.raw || "").trim().startsWith(">"));
+}
+export function nowPrioOf(raw, prio) {
+  const v = prio && typeof prio === "object" ? prio[raw] : "";
+  return NOW_PRIOS.some((p) => p[0] === v) ? v : NOW_PRIO_DEFAULT;
+}
+export function nowColumns(lines, prio) {
+  const out = { ideally: [], should: [], want: [], have: [] };
+  nowLive(lines).forEach((l) => out[nowPrioOf(l.raw, prio)].push(l));
+  return out;
+}
+// Now: the one she picked if it's still open, else the first that most has
+// to be done (Have to, then Want to, then Should try, then Ideally).
+export function nowPickPrio(lines, prio, chosen) {
+  const open = nowLive(lines);
+  if (chosen) { const c = open.find((l) => l.raw === chosen); if (c) return c; }
+  const cols = nowColumns(lines, prio);
+  for (const key of ["have", "want", "should", "ideally"]) if (cols[key].length) return cols[key][0];
+  return null;
 }
