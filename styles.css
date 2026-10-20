@@ -928,3 +928,10 @@ body.popout #app { max-width: none; }
 .smart-clean button { width: auto; }
 .smart-clean-list { margin: 6px 0 10px; }
 .smart-clean-list summary { cursor: pointer; color: var(--accent); }
+
+/* 2026-10-20b: knobs on both steps, skip, if there's time, the bank folded away. */
+.smart-knobs { border-top: 1px solid var(--soft); border-bottom: 1px solid var(--soft); padding: 8px 0; margin: 8px 0 12px; }
+.smart-item.maybe { opacity: 0.9; box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 45%, transparent); }
+.smart-skip { width: auto; margin: 0 0 0 8px; padding: 2px 10px; font-size: 0.8rem; }
+.smart-step.time { background: var(--soft); }
+.plan-bank.bank-hidden { min-height: 0; }
