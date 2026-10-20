@@ -37,7 +37,8 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          splitLine, parseChat, chatWaiting, APP_VERSION, nowScroll, eventAfterDrag,
          planCheck, repeatWords, subjectColour, eventColour, EVENT_COLOURS,
          pageData, pageHabits, pageSlots, pageGaps, longerBy, pageSteps, carryList, PAGE_MOST_HABITS, PAGE_HABIT_IDEAS, PAGE_MOST_STARS, pageDoneBySlot,
-         smartItems, smartPlan, smartDefaults, smartLeftovers, smartReadWords, smartLevelOf, smartSubjectKey, SMART_LEVELS } from "./logic.js";   // 2026-10-19o: smart plan
+         smartItems, smartPlan, smartDefaults, smartLeftovers, smartReadWords, smartLevelOf, smartSubjectKey, SMART_LEVELS,
+         NOW_BLOCKS, nowBlocks, nowPick, nowRollover, nowBlockOf } from "./logic.js";   // 2026-10-20d   // 2026-10-19o: smart plan
 
 const $ = (id) => document.getElementById(id);
 // 2026-10-18b: a line's subject, by its words, from the bank's subject lists.
@@ -723,7 +724,9 @@ function subjectFor(line) {
   // 2026-10-18c: "tasks from subjects must have those colours". Matches the
   // line's words (ignoring its worth and "(optional)"), a "do 1 from [X]"
   // card, and a line that starts "physics:".
-  const raw = String((line && (line.text || line.raw)) || "").replace(/^>\s*/, "").trim();
+  // 2026-10-20d: "these tasks dont have their colorus". A smart plan's "Go over X (1 of 3)" is X's subject.
+  const raw = String((line && (line.text || line.raw)) || "").replace(/^>\s*/, "").trim()
+    .replace(/^Go over (.+) \(\d+ of \d+\)$/, "$1");
   // 2026-10-18e: a copy ("words (2)") has its subject's colour too.
   let words = raw;
   for (let i = 0; i < 3; i += 1) {
@@ -4497,6 +4500,106 @@ async function smartApply(plan) {
   drawPage();
 }
 
+// 2026-10-20d: her "today". One thing now, big; tick it and the next comes
+// up. She can pick whatever she feels like (from today, or from another day,
+// which brings it to today), say "Not today" (it goes to tomorrow), or push
+// the rest of today later when she's running over. Below, today in loose
+// blocks: morning, afternoon, evening, any time.
+function pageRollover(found, today) {
+  const last = recall("tutor-rolled", null);
+  if (last === today) return;
+  keep("tutor-rolled", today);
+  if (last === null) return;                // the first time ever: it starts from tomorrow, nothing moves today
+  const left = nowRollover(found, new Date(), locksNow(found));
+  if (!left.length) return;
+  left.forEach((l) => moveLine({ text: l.text, from: l.from }, today));
+  page.said = "Morning. " + left.length + " from yesterday " + (left.length === 1 ? "is" : "are") + " on today now.";
+}
+
+function pageNowCard(day, lines, times, found) {
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const card = el("div", "page-card now-card");
+  const pick = nowPick(lines, day, times, nowMin, page.nowRaw);
+  card.append(el("span", "page-label", "Now"));
+  if (!pick) {
+    card.append(el("p", "now-name", "Nothing left on today. Well done."));
+  } else {
+    const colour = subjectColour(subjectFor({ text: pick.raw }));
+    if (colour) { card.classList.add("subj"); card.style.setProperty("--subj", colour); }
+    card.append(el("p", "now-name", lineLabel(pick.raw)));
+    const span = timeParts(times[day + "|" + pick.raw]);
+    if (span) card.append(el("p", "muted", "Planned " + clockWords(hhmm(span.start)) + (span.end !== null ? " to " + clockWords(hhmm(span.end)) : "")));
+    const row = el("div", "now-actions");
+    row.append(
+      button("Done", "now-done", () => {
+        markDone(day, pick.raw, true, true);
+        page.nowRaw = null;
+        page.said = "Ticked off “" + lineLabel(pick.raw) + "”. Next one's up.";
+        drawPage();
+      }),
+      button("Pick something else", "quiet", () => { page.nowChoose = !page.nowChoose; drawPage(); }),
+      button("Not today", "quiet", () => {
+        page.nowRaw = null;
+        moveLine({ text: pick.raw, from: day }, addDayIso(day, 1));
+        page.said = "“" + lineLabel(pick.raw) + "” is on tomorrow. That's fine.";
+        drawPage();
+      }));
+    const late = el("div", "now-late");
+    late.append(el("span", "muted", "Running over?"));
+    [15, 30, 60].forEach((m) => late.append(button("+" + m + " min", "quiet", () => {
+      shiftDay(day, m);
+      page.said = "Everything still to come today is " + m + " minutes later.";
+      drawPage();
+    })));
+    card.append(row, late);
+  }
+  // Today in blocks; press one to do it now.
+  const blocks = nowBlocks(lines, day, times);
+  const here = nowBlockOf(nowMin);
+  const wrap = el("div", "now-blocks" + (page.nowChoose ? " open" : ""));
+  NOW_BLOCKS.concat([["any", "Any time"]]).forEach(([key, label]) => {
+    const list = blocks[key] || [];
+    if (!list.length) return;
+    const b = el("div", "now-block" + (key === here ? " here" : ""));
+    b.append(el("p", "now-block-head", label + (key === here ? " (now)" : "")));
+    list.forEach((l) => {
+      const chip = button(lineLabel(l.raw), "now-chip" + (pick && l.raw === pick.raw ? " on" : ""), () => {
+        page.nowRaw = l.raw; page.nowChoose = false; drawPage();
+      });
+      const c = subjectColour(subjectFor({ text: l.raw }));
+      if (c) { chip.classList.add("subj"); chip.style.setProperty("--subj", c); }
+      b.append(chip);
+    });
+    wrap.append(b);
+  });
+  card.append(wrap);
+  // Something from another day: it comes to today.
+  if (page.nowChoose) {
+    const other = el("details", "now-other");
+    other.append(el("summary", "", "Something from another day"));
+    ((found && found.days) || []).filter((d) => d.day > day && d.day <= addDayIso(day, 7)).forEach((d) => {
+      const open = d.lines.filter((l) => !l.done && String(l.text || "").trim() && !String(l.text).trim().startsWith(">"));
+      if (!open.length) return;
+      other.append(el("p", "now-block-head", dayHead(d.day, now)));
+      open.forEach((l) => {
+        const t = String(l.text).trim();
+        const chip = button(lineLabel(t), "now-chip", () => {
+          moveLine({ text: t, from: d.day }, day);
+          page.nowRaw = t; page.nowChoose = false;
+          page.said = "“" + lineLabel(t) + "” is on today now.";
+          drawPage();
+        });
+        const c = subjectColour(subjectFor({ text: t }));
+        if (c) { chip.classList.add("subj"); chip.style.setProperty("--subj", c); }
+        other.append(chip);
+      });
+    });
+    card.append(other);
+  }
+  return card;
+}
+
 function pageNotesCard(day, data) {
   const card = el("div", "page-card page-notes");
   card.append(el("span", "page-label", "Notes"));
@@ -4605,6 +4708,7 @@ function drawPage() {
     box.append(button("Plan tomorrow", "page-plan-go", () => { page.day = tomorrow; drawPage(); }));
   }
   if (page.said) box.append(el("p", "page-said", page.said));
+  if (day === today) { pageRollover(found, today); box.append(pageNowCard(day, lines, times, found)); }   // 2026-10-20d
   const top = el("div", "page-top");
   top.append(pageStarCard(day, lines, data), pageTrackCard(day, data));
   box.append(top);
