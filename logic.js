@@ -1540,7 +1540,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v69";   // 2026-10-20d: was v68
+export const APP_VERSION = "v70";   // 2026-10-20e: was v69
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -2622,4 +2622,28 @@ export function nowRollover(found, today, locks) {
     const t = String(l.text || "").trim();
     return t && !l.done && !t.startsWith(">") && !/^do \d+ from \[/i.test(t) && !locked.has(yesterday + "|" + t);
   }).map((l) => ({ text: String(l.text).trim(), from: yesterday }));
+}
+
+
+// ---- 2026-10-20e: treats. "i want to be able to say if i do this task, i get
+// x reward. likie if i do even 3 tasks then i get a zbar." A rule is
+// {id, kind: "count", n, reward} (n tasks ticked today) or {id, kind: "task",
+// task, reward} (that task ticked). Each is earned once a day.
+export function treatRules(raw) {
+  return (Array.isArray(raw) ? raw : []).filter((r) => r && String(r.reward || "").trim() &&
+    ((r.kind === "count" && Number(r.n) >= 1) || (r.kind === "task" && String(r.task || "").trim())))
+    .map((r) => ({ id: String(r.id || ""), kind: r.kind, n: Math.max(1, Math.min(50, Math.round(Number(r.n) || 1))),
+                   task: String(r.task || "").trim(), reward: String(r.reward).trim().slice(0, 80) }));
+}
+// Which rules are earned now that weren't before. doneTexts: today's ticked lines.
+export function treatsEarned(rules, doneTexts, got) {
+  const have = new Set(got || []);
+  const done = (doneTexts || []).map((t) => String(t).trim().toLowerCase());
+  return treatRules(rules).filter((r) => !have.has(r.id) &&
+    (r.kind === "count" ? done.length >= r.n : done.includes(r.task.toLowerCase())));
+}
+export function treatProgress(rule, doneTexts) {
+  const done = (doneTexts || []).map((t) => String(t).trim().toLowerCase());
+  if (rule.kind === "count") return Math.min(rule.n, done.length) + " of " + rule.n;
+  return done.includes(rule.task.toLowerCase()) ? "done" : "not yet";
 }
