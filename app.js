@@ -39,7 +39,8 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          pageData, pageHabits, pageSlots, pageGaps, longerBy, pageSteps, carryList, PAGE_MOST_HABITS, PAGE_HABIT_IDEAS, PAGE_MOST_STARS, pageDoneBySlot,
          smartItems, smartPlan, smartDefaults, smartLeftovers, smartReadWords, smartLevelOf, smartSubjectKey, SMART_LEVELS,
          NOW_BLOCKS, nowBlocks, nowPick, nowRollover, nowBlockOf,
-         treatRules, treatsEarned, treatProgress } from "./logic.js";   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
+         treatRules, treatsEarned, treatProgress,
+         NOW_PRIOS, nowColumns, nowPickPrio, nowPrioOf } from "./logic.js";   // 2026-10-20h   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
 
 const $ = (id) => document.getElementById(id);
 // 2026-10-18b: a line's subject, by its words, from the bank's subject lists.
@@ -3961,7 +3962,10 @@ function smartSave() { keep("tutor-smart", page.smart ? { ...page.smart, busy: f
 
 function pageDayNow() {
   const today = isoDay(new Date());
-  if (!page.day) page.day = new Date().getHours() >= 19 ? addDayIso(today, 1) : today;
+  // 2026-10-20h: the Day page is her "today" now (the Now card), so it opens on
+  // today at any hour; "Plan tomorrow" is a button after 7pm (was: after 7pm
+  // it opened on tomorrow).
+  if (!page.day) page.day = today;
   return page.day;
 }
 function addDayIso(day, by) {
@@ -4702,7 +4706,8 @@ function pageNowCard(day, lines, times, found) {
   head.append(el("span", "page-label", "Now"),
     button(folded ? "Show" : "Hide", "plan-check-fold", () => { keep("tutor-now-folded", !folded); drawPage(); }));
   card.append(head);
-  const pick = nowPick(live, day, times, nowMin, page.nowRaw);
+  const prio = (state.pages[day] && state.pages[day].prio) || {};   // 2026-10-20h
+  const pick = nowPickPrio(live, prio, page.nowRaw);
   const dot = (raw) => {
     const c = subjectColour(subjectFor({ text: raw }));
     const d = el("span", "now-dot");
@@ -4758,23 +4763,24 @@ function pageNowCard(day, lines, times, found) {
     }
   }
   if (folded) return card;
-  // Today in blocks. Press one to do it now; drag it to another block to
-  // move it there (2026-10-20f: "i cant move tasks around"); x deletes it.
-  const blocks = nowBlocks(live, day, times);
-  const here = nowBlockOf(nowMin);
+  // 2026-10-20h: her four columns, least to most needed. Press one to do it
+  // now; drag it to another column; x deletes it.
+  const cols = nowColumns(live, prio);
   const wrap = el("div", "now-blocks");
-  NOW_BLOCKS.concat([["any", "Any time", 0, 0]]).forEach(([key, label, from, to]) => {
-    const list = blocks[key] || [];
-    const b = el("div", "now-block" + (key === here ? " here" : ""));
-    b.append(el("p", "now-block-head", label + (key === here ? " (now)" : "")));
+  NOW_PRIOS.forEach(([key, label]) => {
+    const list = cols[key] || [];
+    const b = el("div", "now-block prio-" + key);
+    b.append(el("p", "now-block-head", label));
     b.addEventListener("dragover", (e) => { e.preventDefault(); b.classList.add("over"); });
     b.addEventListener("dragleave", () => b.classList.remove("over"));
     b.addEventListener("drop", (e) => {
       e.preventDefault();
       b.classList.remove("over");
       const raw = e.dataTransfer.getData("text/plain");
-      if (!raw) return;
-      nowMoveTo(day, raw, key, from, to, list, times, nowMin);
+      if (!raw || nowPrioOf(raw, prio) === key) return;
+      savePage(day, { prio: { ...prio, [raw]: key } });
+      page.said = "“" + lineLabel(raw) + "” is in " + label + " now.";
+      drawPage();
     });
     list.forEach((l) => {
       const item = el("div", "now-item");
@@ -4783,7 +4789,7 @@ function pageNowCard(day, lines, times, found) {
       });
       chip.append(dot(l.raw), document.createTextNode(lineLabel(l.raw)));
       chip.draggable = true;
-      chip.title = "Press to do it now. Drag it to another block to move it.";
+      chip.title = "Press to do it now. Drag it to another column.";
       chip.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/plain", l.raw); e.dataTransfer.effectAllowed = "move"; });
       const x = button("×", "now-x", () => {
         if (page.nowRaw === l.raw) page.nowRaw = null;
@@ -4943,7 +4949,10 @@ function drawPage() {
   right.append(pageTaskList(day, lines, times), pageTreatsCard(day), pageNotesCard(day, data), pageFunCard());   // 2026-10-19o: fun stuff bank; 2026-10-20e: treats
   const carry = pageCarryCard(day, lines, data);
   if (carry) right.append(carry);
-  body.append(pageBlocksCard(day, lines, times, eventsNow(found, Date.now())), right);
+  // 2026-10-20h: "i thought we quit time blocks??" The half hour grid is off
+  // the Day page; times live on the calendar.
+  body.classList.add("no-blocks");
+  body.append(right);
   box.append(body);
   if (keepFocus) {
     const again = [...box.querySelectorAll("input")].find((i) => i.placeholder === keepFocus.ph);
