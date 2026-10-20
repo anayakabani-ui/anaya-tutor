@@ -39,7 +39,7 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          pageData, pageHabits, pageSlots, pageGaps, longerBy, pageSteps, carryList, PAGE_MOST_HABITS, PAGE_HABIT_IDEAS, PAGE_MOST_STARS, pageDoneBySlot,
          smartItems, smartPlan, smartDefaults, smartLeftovers, smartReadWords, smartLevelOf, smartSubjectKey, SMART_LEVELS,
          NOW_BLOCKS, nowBlocks, nowPick, nowRollover, nowBlockOf,
-         treatRules, treatsEarned, treatProgress,
+         treatRules, treatsForDay, treatsEarned, treatProgress,
          NOW_PRIOS, nowColumns, nowPickPrio, nowPrioOf,
          guessSubjectLoose, linkParts } from "./logic.js";   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
 
@@ -642,7 +642,7 @@ function celebrateTick(raw) {
   const today = isoDay(new Date());
   const t = treatsData();
   const got = Array.isArray(t.got[today]) ? t.got[today] : [];
-  const earned = treatsEarned(t.rules, doneTodayTexts(), got);
+  const earned = treatsEarned(t.rules, doneTodayTexts(), got, today);   // 2026-10-20k: only today's rules
   if (!earned.length) return;
   saveTreats({ got: { ...t.got, [today]: got.concat(earned.map((r) => r.id)) } });
   const r = earned[0];
@@ -660,7 +660,11 @@ function pageTreatsCard(day) {
   const card = el("div", "page-card page-treats");
   card.append(el("span", "page-label", "Treats"));
   if (!t.rules.length) card.append(el("p", "muted", "Give yourself something to work for. Like: after 3 tasks, a Zbar."));
-  t.rules.forEach((r) => {
+  // 2026-10-20k: the page's own day. Planning tomorrow shows tomorrow's
+  // treats and tomorrow's tasks to pick from (it was always today's).
+  const shown = treatsForDay(t.rules, day);
+  if (t.rules.length && !shown.length) card.append(el("p", "muted", "No treats set for this day yet."));
+  shown.forEach((r) => {
     const row = el("div", "treat-row" + (got.includes(r.id) ? " got" : ""));
     row.append(el("span", "treat-words", (r.kind === "count" ? "After " + r.n + " " + (r.n === 1 ? "task" : "tasks") : "When “" + lineLabel(r.task) + "” is done") + ": " + r.reward),
                el("span", "treat-progress", got.includes(r.id) ? "Earned today" : day === today ? treatProgress(r, done) : ""),
@@ -681,7 +685,7 @@ function pageTreatsCard(day) {
   } else {
     what = document.createElement("select");
     what.setAttribute("aria-label", "Which task");
-    pageLines(today).filter((l) => l.kind === "line" && !l.done && !String(l.raw).startsWith(">")).forEach((l) => {
+    pageLines(day).filter((l) => l.kind === "line" && !l.done && !String(l.raw).startsWith(">")).forEach((l) => {   // 2026-10-20k: was pageLines(today)
       const o = document.createElement("option"); o.value = l.raw; o.textContent = lineLabel(l.raw); what.append(o);
     });
     row.append(el("span", "muted", "When"), what, el("span", "muted", "is done, I get"));
@@ -692,11 +696,11 @@ function pageTreatsCard(day) {
   const save = () => {
     const r = reward.value.trim();
     if (!r) { reward.focus(); return; }
-    const rule = kind === "count" ? { id: "t" + Date.now(), kind, n: Number(what.value) || 3, reward: r }
-      : { id: "t" + Date.now(), kind, task: what.value, reward: r };
+    const rule = kind === "count" ? { id: "t" + Date.now(), kind, n: Number(what.value) || 3, reward: r, day }
+      : { id: "t" + Date.now(), kind, task: what.value, reward: r, day };   // 2026-10-20k: for this page's day
     if (kind === "task" && !rule.task) return;
     saveTreats({ rules: t.rules.concat([rule]) });
-    page.said = "Deal. " + (kind === "count" ? "After " + rule.n + " tasks today" : "When “" + lineLabel(rule.task) + "” is done") + ", " + r + ".";
+    page.said = "Deal. " + (kind === "count" ? "After " + rule.n + " tasks " + (day === today ? "today" : "that day") : "When “" + lineLabel(rule.task) + "” is done") + ", " + r + ".";
     drawPage();
   };
   reward.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
