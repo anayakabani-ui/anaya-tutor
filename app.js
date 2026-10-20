@@ -1638,7 +1638,14 @@ function drawBank(box, found, pick) {
   // The bank scrolls for the rest.
   const bankBox = el("section", "plan-day plan-bank");
   bankBox.setAttribute("aria-label", "Task bank");
-  bankBox.append(el("p", "plan-head", "Task bank"));
+  // 2026-10-20b: "ability to also hide task bank".
+  const bankHidden = Boolean(recall("tutor-bank-hidden", false));
+  const bankTop = el("div", "plan-check-top");
+  const bankFold = button(bankHidden ? "Show" : "Hide", "plan-check-fold", () => { keep("tutor-bank-hidden", !bankHidden); drawCalendar(); });
+  bankFold.title = bankHidden ? "Show the task bank" : "Hide the task bank";
+  bankTop.append(el("p", "plan-head", "Task bank"), bankFold);
+  bankBox.append(bankTop);
+  if (bankHidden) { bankBox.classList.add("bank-hidden"); box.append(bankBox); return; }
   const tabs = bankTabs(withMoves(found, state.moves).get(BANK) || []);
   if (!tabs.length) bankBox.append(el("p", "muted", "Your Subjects lists show here. You can also drag a task here to keep it for later, off every day."));
   const grid = el("div", "bank-grid");
@@ -4145,20 +4152,67 @@ function smartChips(label, options, now, set) {
 function pageSmartCard(found) {
   const s = page.smart;
   const now = new Date();
+  const d0 = smartDefaults(now);
   if (!s.gone) s.gone = {};
-  const items = smartItems(found, state.tasks, state.exams, subjectNames(), now).filter((it) => !s.gone[it.key]);   // 2026-10-19q
+  // 2026-10-20b: "YESTERDAY I SAID SOME TASKS ARE DONE ... WHY WONT IT EVER SAVE".
+  // Done already is kept for good on this device, not just for one plan.
+  const goneForGood = recall("tutor-smart-gone", {});
+  const items = smartItems(found, state.tasks, state.exams, subjectNames(), now)
+    .filter((it) => !s.gone[it.key] && !goneForGood[it.key]);   // 2026-10-19q
   const card = el("div", "page-card smart-card");
   card.append(el("span", "page-label", "Smart plan"));
   if (s.said) card.append(el("p", "page-said", s.said));
   const answer = (it) => ({ ...it, ...(s.answers[it.key] || {}) });
   const setA = (it, patch) => { s.answers[it.key] = { ...(s.answers[it.key] || {}), ...patch }; smartSave(); drawPage(); };
+  const set = (patch) => { Object.assign(s, patch); smartSave(); drawPage(); };
   // 2026-10-19q: "no option to either do ive already done a task". Ticks it and takes it off the plan.
   const doneAlready = (it) => {
     s.gone[it.key] = true;
+    keep("tutor-smart-gone", { ...recall("tutor-smart-gone", {}), [it.key]: true });   // 2026-10-20b
     if (it.from === "day") markDone(it.day, it.text, true);
     else if (it.from === "hw" && it.id) sendEdit({ kind: "tick", task: Number(it.id) });
-    s.said = "\u201c" + it.text + "\u201d is done" + (it.from === "bank" ? " (off the plan; it's still in the bank)" : ", ticked off") + ".";
+    s.said = "“" + it.text + "” is done" + (it.from === "bank" ? ". It won't come up in Smart plan again (it's still in the bank)" : ", ticked off") + ".";
     smartSave(); drawPage();
+  };
+  // 2026-10-20b: the knobs, on both steps, so she can try more or less and see it.
+  const knobs = () => {
+    const box = el("div", "smart-knobs");
+    if (!s.start) s.start = d0.start;
+    if (!Array.isArray(s.light)) s.light = d0.light;
+    if (!s.budget) s.budget = d0.budget;
+    if (!s.dayStart) s.dayStart = d0.dayStart;
+    if (!s.dayEnd) s.dayEnd = d0.dayEnd;
+    if (!s.spread) s.spread = d0.spread;
+    if (s.piece === undefined) s.piece = 0;
+    if (s.timeAll === undefined) s.timeAll = true;
+    const today = isoDay(now);
+    box.append(smartChips("Start from", [[today, "Today"], [addDayIso(today, 1), "Tomorrow"], [addDayIso(today, 2), "Day after"]], s.start,
+      (v) => set({ start: v })));
+    const easy = el("div", "smart-q");
+    easy.append(el("span", "smart-q-label", "Go easy on"));
+    [0, 1, 2, 3].map((n) => addDayIso(s.start, n)).forEach((d) => {
+      const on = s.light.includes(d);
+      const chip = button(dayHead(d, now), "smart-chip" + (on ? " on" : ""), () =>
+        set({ light: on ? s.light.filter((x) => x !== d) : s.light.concat([d]) }));
+      chip.setAttribute("aria-pressed", String(on));
+      easy.append(chip);
+    });
+    easy.append(el("span", "muted smart-q-hint", "one new thing at most"));
+    box.append(easy);
+    box.append(smartChips("Work a day", [[120, "2 hours"], [180, "3 hours"], [240, "4 hours"], [300, "5 hours"], [360, "6 hours"], [480, "8 hours"]], s.budget,
+      (v) => set({ budget: v })));
+    box.append(smartChips("Day starts", [[7 * 60, "7am"], [8 * 60, "8am"], [9 * 60, "9am"], [10 * 60, "10am"], [11 * 60, "11am"]], s.dayStart,
+      (v) => set({ dayStart: v })));
+    box.append(smartChips("Day ends", [[17 * 60, "5pm"], [18 * 60, "6pm"], [19 * 60, "7pm"], [20 * 60, "8pm"], [21 * 60, "9pm"]], s.dayEnd,
+      (v) => set({ dayEnd: v })));
+    box.append(smartChips("Each piece", [[0, "Auto"], [15, "15 min"], [20, "20 min"], [30, "30 min"], [45, "45 min"]], s.piece,
+      (v) => set({ piece: v })));
+    box.append(smartChips("Spread", [["even", "Evenly across the days"], ["early", "Early as I can"]], s.spread,
+      (v) => set({ spread: v })));
+    box.append(smartChips("Your tasks", [[true, "Give them times too"], [false, "Leave their times"]], s.timeAll,
+      (v) => set({ timeAll: v })));
+    box.append(el("p", "muted smart-q-hint", "What's already on a day counts towards its time. Today starts from now. A 10 minute break after each one. Nothing goes after the deadline."));
+    return box;
   };
   if (s.view === "ask") {
     card.append(el("p", "muted", "I've had a guess at each one. Fix anything that's wrong, pick your deadline, then press Make my plan."));
@@ -4172,51 +4226,25 @@ function pageSmartCard(found) {
     dl.append(pick);
     // 2026-10-19q: "or mass add the deadline".
     dl.append(button("Use this date for all", "quiet smart-all", () => {
-      items.forEach((raw) => { const it = answer(raw); if (it.must) s.answers[it.key] = { ...(s.answers[it.key] || {}), by: s.deadline }; });
-      s.said = "Every must do is due " + dayHead(s.deadline, now) + " now.";
+      items.forEach((raw) => { const it = answer(raw); if (it.must !== false) s.answers[it.key] = { ...(s.answers[it.key] || {}), by: s.deadline }; });
+      s.said = "Everything's due " + dayHead(s.deadline, now) + " now.";
       smartSave(); drawPage();
     }));
     card.append(dl);
-    // 2026-10-19r: where it starts, and the days to go easy on.
-    const first = smartDefaults(now).start === isoDay(now) ? isoDay(now) : smartDefaults(now).start;
-    const startOpts = [[isoDay(now), "Today"], [addDayIso(isoDay(now), 1), "Tomorrow"], [addDayIso(isoDay(now), 2), "Day after"]];
-    if (!s.start) s.start = first;
-    card.append(smartChips("Start from", startOpts, s.start, (v) => { s.start = v; smartSave(); drawPage(); }));
-    const easy = el("div", "smart-q");
-    easy.append(el("span", "smart-q-label", "Go easy on"));
-    if (!Array.isArray(s.light)) s.light = [];
-    [0, 1, 2, 3].map((n) => addDayIso(s.start, n)).forEach((d) => {
-      const on = s.light.includes(d);
-      const chip = button(dayHead(d, now), "smart-chip" + (on ? " on" : ""), () => {
-        s.light = on ? s.light.filter((x) => x !== d) : s.light.concat([d]);
-        smartSave(); drawPage();
-      });
-      chip.setAttribute("aria-pressed", String(on));
-      easy.append(chip);
-    });
-    easy.append(el("span", "muted smart-q-hint", "one new thing at most"));
-    card.append(easy);
-    card.append(el("p", "muted smart-q-hint", "Nothing goes after the deadline. Anything due later is pulled in before it."));
-    // 2026-10-20: how much a day, and when the day starts (today: from now).
-    if (!s.budget) s.budget = 120;
-    if (!s.dayStart) s.dayStart = 9 * 60;
-    card.append(smartChips("Work a day", [[60, "1 hour"], [90, "1\u00bd hours"], [120, "2 hours"], [180, "3 hours"]], s.budget,
-      (v) => { s.budget = v; smartSave(); drawPage(); }));
-    card.append(smartChips("Day starts", [[8 * 60, "8am"], [9 * 60, "9am"], [10 * 60, "10am"], [11 * 60, "11am"], [12 * 60, "12pm"]], s.dayStart,
-      (v) => { s.dayStart = v; smartSave(); drawPage(); }));
-    card.append(el("p", "muted smart-q-hint", "Today it starts from now. A 10 minute break after each one."));
+    card.append(knobs());
     if (!items.length) { card.append(el("p", "muted", "Nothing to plan. Your days and the bank are empty.")); return card; }
     const list = el("div", "smart-list");
     items.forEach((raw) => {
       const it = answer(raw);
-      const row = el("div", "smart-item" + (it.must ? " must" : ""));
+      const row = el("div", "smart-item" + (it.must === true ? " must" : it.must === "maybe" ? " maybe" : ""));
       const head = el("div", "smart-item-head");
-      head.append(el("span", "smart-item-name", it.from === "hw" ? "HW: " + it.text : it.text));
+      head.append(el("span", "smart-item-name", it.text));
       head.append(el("span", "smart-item-where", it.from === "day" ? dayHead(it.day, now) : it.from === "bank" ? "In the bank" : "Homework"));
       head.append(button("Done already", "quiet smart-done", () => doneAlready(it)));
       row.append(head);
-      row.append(smartChips("Must do?", [[true, "Yes"], [false, "No"]], it.must, (v) => setA(it, { must: v })));
-      if (it.must) {
+      // 2026-10-20b: "which tasks are ok not to do": If there's time goes in only once the musts fit.
+      row.append(smartChips("Needed?", [[true, "Must do"], ["maybe", "If there's time"], [false, "No"]], it.must, (v) => setA(it, { must: v })));
+      if (it.must !== false) {
         row.append(smartChips("What is it?", [["hw", "Homework"], ["test", "Test"], ["other", "Other"]], it.kind, (v) => setA(it, { kind: v })));
         if (it.kind === "test") {
           row.append(smartChips("Confident?", [["yes", "Yes"], ["kinda", "Kinda"], ["no", "No"]], it.confident, (v) => setA(it, { confident: v })));
@@ -4240,27 +4268,37 @@ function pageSmartCard(found) {
     return card;
   }
   // The plan. 2026-10-20: at real times, coloured by subject, with what won't fit said.
+  card.append(knobs());
+  if (!Array.isArray(s.skip)) s.skip = [];
   const plan = smartPlan(items, s.answers, found, now, s.deadline,
-    { start: s.start, light: s.light, budget: s.budget || 120, dayStart: s.dayStart || 540, nowMin: now.getHours() * 60 + now.getMinutes() });
+    { start: s.start, light: s.light, budget: s.budget, dayStart: s.dayStart, dayEnd: s.dayEnd, spread: s.spread,
+      piece: s.piece, timeAll: s.timeAll, skip: s.skip, nowMin: now.getHours() * 60 + now.getMinutes() });
   page.smartPlanNow = plan;
-  if (!plan.steps.length) card.append(el("p", "muted", "Nothing's marked as a must do. Go back and pick some."));
-  if (plan.changes) card.append(el("p", "page-said", plan.changes + " new " + (plan.changes === 1 ? "piece" : "pieces") + ", about " +
-    minutesText(plan.minutes * 60) + " in all, at most " + minutesText((s.budget || 120) * 60) + " a day."));
+  const fresh = plan.steps.filter((st) => st.act === "add" || st.act === "move").length;
+  const timed = plan.steps.filter((st) => st.act === "time" && st.at).length;
+  if (!plan.steps.length) card.append(el("p", "muted", "Nothing's marked as needed. Go back and pick some."));
+  if (plan.changes) card.append(el("p", "page-said", fresh + " new or moved (about " + minutesText(plan.minutes * 60) + ")" +
+    (timed ? ", and " + timed + " of your tasks get a time" : "") + ". Up to " + minutesText(s.budget * 60) + " a day."));
   if (plan.late.length) card.append(el("p", "smart-late", "Already past the date: " + plan.late.join(", ") + ". They're on the first day."));
   if (plan.unplaced.length) card.append(el("p", "smart-late", "Won't fit before the deadline: " + plan.unplaced.join(", ") +
-    ". Give yourself more time a day, a later deadline, or say No to something."));
+    ". Give yourself more time a day, shorter pieces, a later deadline, or make some “If there's time”."));
+  if (s.skip.length) card.append(button("Put back the " + s.skip.length + " you took out", "quiet", () => set({ skip: [] })));
   Object.keys(plan.days).sort().forEach((day) => {
     const box = el("div", "smart-day");
-    const fresh = plan.days[day].filter((st) => st.act !== "keep").reduce((n, st) => n + st.mins, 0);
-    box.append(el("h3", "smart-day-head", dayHead(day, now) + (fresh ? "  \u00b7  " + minutesText(fresh * 60) : "")));
+    const total = plan.load[day] || 0;
+    box.append(el("h3", "smart-day-head", dayHead(day, now) + "  ·  " + minutesText(total * 60) + " of " + minutesText(s.budget * 60)));
     plan.days[day].forEach((st) => {
       const line = el("div", "smart-step " + st.act);
       const colour = subjectColour(st.subject) || subjectColour(subjectFor({ text: st.text }));
       if (colour) { line.classList.add("subj"); line.style.setProperty("--subj", colour); }
       const span = timeParts(st.at);
-      line.append(el("span", "smart-step-time", span ? clockWords(hhmm(span.start)) : st.act === "keep" ? "" : "no time"),
+      const own = mergedTimes(allDays(state.alldays), state.timesWaiting, Date.now())[st.id] || "";
+      const ownSpan = timeParts(own);
+      line.append(el("span", "smart-step-time", span ? clockWords(hhmm(span.start)) : ownSpan ? clockWords(hhmm(ownSpan.start)) : "no time"),
                   el("span", "smart-step-text", st.text),
-                  el("span", "smart-step-tag", st.act === "add" ? "New" : st.act === "move" ? "Moved here" : "Already here"));
+                  el("span", "smart-step-tag", st.act === "add" ? "New" : st.act === "move" ? "Moved here" : st.act === "time" ? "Gets a time" : "Already here"));
+      // 2026-10-20b: take one out of the plan.
+      if (st.act !== "keep" || st.at) line.append(button("Skip", "quiet smart-skip", () => set({ skip: s.skip.concat([st.id]) })));
       box.append(line);
     });
     card.append(box);
@@ -4325,7 +4363,7 @@ async function smartClean(list) {
 async function smartApply(plan) {
   const s = page.smart;
   if (!s || s.busy) return;
-  const todo = plan.steps.filter((st) => st.act !== "keep");
+  const todo = plan.steps.filter((st) => (st.act === "add" || st.act === "move") || ((st.act === "time" || st.act === "keep") && st.at));   // 2026-10-20b
   s.busy = true;
   let sent = 0;
   let done = 0;
@@ -4336,11 +4374,12 @@ async function smartApply(plan) {
   for (const st of todo) {
     let ok = false;
     try {
-      if (st.act === "add") ok = await within(sendEdit({ kind: "day_add", day: st.day, text: st.text }));
+      if (st.act === "time" || st.act === "keep") ok = await within(sendEdit({ kind: "line_time", day: st.day, text: st.text, time: st.at }));   // 2026-10-20b: only a time
+      else if (st.act === "add") ok = await within(sendEdit({ kind: "day_add", day: st.day, text: st.text }));
       else if (st.from === "bank") ok = await within(st.pick ? pickToDay({ text: st.text, from: BANK_PICK }, st.day, st.at || "") : moveLine({ text: st.text, from: BANK }, st.day));
       else ok = await within(moveLine({ text: st.text, from: st.from }, st.day));
       // 2026-10-20: "set it in the actual TIMED CALENDAR".
-      if (ok && st.at && !(st.from === "bank" && st.pick)) await within(sendEdit({ kind: "line_time", day: st.day, text: st.text, time: st.at }));
+      if ((st.act === "add" || st.act === "move") && ok && st.at && !(st.from === "bank" && st.pick)) await within(sendEdit({ kind: "line_time", day: st.day, text: st.text, time: st.at }));
       if (ok && st.act === "add") keep("tutor-smart-made", recall("tutor-smart-made", []).concat([{ day: st.day, text: st.text }]).slice(-300));
     } catch (error) {
       console.log("[smart] step failed", st.text, error);
