@@ -4671,6 +4671,11 @@ function pageRollover(found, today) {
 // 2026-10-20f: a task dropped on a block goes after the last one there
 // (today's current block: from now), keeping its length; on "Any time" it
 // loses its time.
+// 2026-10-20d: "esp bc it shuld be this". The laptop hears what she's
+// steering by on the Now card, and keeps its own task time cards quiet for a
+// few hours after (now_pick).
+function nowSteer(text) { sendEdit({ kind: "now_pick", text: String(text || "") }).catch(() => {}); }
+
 function nowMoveTo(day, raw, key, from, to, list, times, nowMin) {
   if (key === "any") { sendTime(day, raw, ""); page.said = "“" + lineLabel(raw) + "” is any time now."; drawPage(); return; }
   const own = timeParts(times[day + "|" + raw]);
@@ -4716,6 +4721,7 @@ function pageNowCard(day, lines, times, found) {
     row.append(
       button("Done", "now-done", () => {
         markDone(day, pick.raw, true, true);
+        nowSteer(pick.raw);
         page.nowRaw = null;
         page.said = "Ticked off “" + lineLabel(pick.raw) + "”. Next one's up.";
         drawPage();
@@ -4724,6 +4730,7 @@ function pageNowCard(day, lines, times, found) {
       button("Pick something else", "quiet", () => { page.nowChoose = !page.nowChoose; drawPage(); }),
       button("Not today", "quiet", () => {
         page.nowRaw = null;
+        nowSteer(pick.raw);
         moveLine({ text: pick.raw, from: day }, addDayIso(day, 1));
         page.said = "“" + lineLabel(pick.raw) + "” is on tomorrow. That's fine.";
         drawPage();
@@ -4772,7 +4779,7 @@ function pageNowCard(day, lines, times, found) {
     list.forEach((l) => {
       const item = el("div", "now-item");
       const chip = button("", "now-chip" + (pick && l.raw === pick.raw ? " on" : ""), () => {
-        page.nowRaw = l.raw; page.nowChoose = false; drawPage();
+        page.nowRaw = l.raw; page.nowChoose = false; nowSteer(l.raw); drawPage();
       });
       chip.append(dot(l.raw), document.createTextNode(lineLabel(l.raw)));
       chip.draggable = true;
@@ -4805,7 +4812,7 @@ function pageNowCard(day, lines, times, found) {
         const t = String(l.text).trim();
         const chip = button(lineLabel(t), "now-chip", () => {
           moveLine({ text: t, from: d.day }, day);
-          page.nowRaw = t; page.nowChoose = false;
+          page.nowRaw = t; page.nowChoose = false; nowSteer(t);
           page.said = "“" + lineLabel(t) + "” is on today now.";
           drawPage();
         });
