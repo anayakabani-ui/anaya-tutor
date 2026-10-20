@@ -935,3 +935,15 @@ body.popout #app { max-width: none; }
 .smart-skip { width: auto; margin: 0 0 0 8px; padding: 2px 10px; font-size: 0.8rem; }
 .smart-step.time { background: var(--soft); }
 .plan-bank.bank-hidden { min-height: 0; }
+
+/* 2026-10-20c: Doing now; her words for the smart plan; subjects. */
+.doing-now { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: var(--card); box-shadow: var(--shadow);
+  border-radius: var(--r-card); padding: 10px 12px; margin: 0 0 12px; }
+.doing-now input { flex: 1 1 260px; margin: 0; }
+.doing-now button { width: auto; margin: 0; }
+.doing-now-len { display: flex; flex-wrap: wrap; gap: 4px; }
+.doing-now-go { width: auto; }
+.smart-words { width: 100%; min-height: 90px; margin: 6px 0; font: inherit; padding: 10px 12px; border-radius: 10px; }
+.smart-subjects { display: flex; flex-direction: column; gap: 2px; margin: 6px 0 10px; }
+.smart-subject.subj .smart-q-label { color: var(--subj); font-weight: 700; }
+.smart-later { color: var(--muted); }
