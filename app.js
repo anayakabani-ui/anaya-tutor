@@ -38,7 +38,8 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          planCheck, repeatWords, subjectColour, eventColour, EVENT_COLOURS,
          pageData, pageHabits, pageSlots, pageGaps, longerBy, pageSteps, carryList, PAGE_MOST_HABITS, PAGE_HABIT_IDEAS, PAGE_MOST_STARS, pageDoneBySlot,
          smartItems, smartPlan, smartDefaults, smartLeftovers, smartReadWords, smartLevelOf, smartSubjectKey, SMART_LEVELS,
-         NOW_BLOCKS, nowBlocks, nowPick, nowRollover, nowBlockOf } from "./logic.js";   // 2026-10-20d   // 2026-10-19o: smart plan
+         NOW_BLOCKS, nowBlocks, nowPick, nowRollover, nowBlockOf,
+         treatRules, treatsEarned, treatProgress } from "./logic.js";   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
 
 const $ = (id) => document.getElementById(id);
 // 2026-10-18b: a line's subject, by its words, from the bank's subject lists.
@@ -538,6 +539,7 @@ function drawToday() {
 // in the tutor. What has no day yet (her old list) is folded under it.
 function tickDay(line) {
   const target = !line.done;
+  if (target && !replaying) setTimeout(() => celebrateTick(line.raw), 0);   // 2026-10-20e: confetti
   if (line.day === isoDay(new Date())) {
     state.pendingToday.set(line.raw, target);
     state.madeAt.set("d:" + line.raw, Date.now());
@@ -550,6 +552,155 @@ function tickDay(line) {
   if (line.day !== isoDay(new Date())) {
     sendEdit({ kind: "day_tick", day: line.day, text: line.raw, done: target });
   }
+}
+
+// ---- 2026-10-20e: "i also want confetti", "i want it to be a huge
+// celebration". A burst of confetti on every tick; a treat earned gets the
+// big one: three bursts and a card in the middle of the screen.
+const CONFETTI_COLOURS = ["#6E2585", "#BDABCC", "#FFCB05", "#E86AA6", "#4C8DF6", "#7CC76A", "#EE6E66", "#14B8A6", "#F2A93B"];
+let confettiCanvas = null;
+let confettiBits = [];
+let confettiRunning = false;
+function confetti(count, fromX, fromY, spread) {
+  try {
+    if (!confettiCanvas) {
+      confettiCanvas = document.createElement("canvas");
+      confettiCanvas.className = "confetti";
+      confettiCanvas.setAttribute("aria-hidden", "true");
+      document.body.append(confettiCanvas);
+    }
+    const w = window.innerWidth, h = window.innerHeight;
+    const dpr = window.devicePixelRatio || 1;
+    confettiCanvas.width = w * dpr; confettiCanvas.height = h * dpr;
+    const x0 = fromX === undefined ? w / 2 : fromX;
+    const y0 = fromY === undefined ? h / 3 : fromY;
+    for (let i = 0; i < count; i++) {
+      const angle = -Math.PI / 2 + (Math.random() - 0.5) * (spread || 2.2);
+      const speed = 6 + Math.random() * 10;
+      confettiBits.push({ x: x0, y: y0, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+        w: 6 + Math.random() * 6, h: 8 + Math.random() * 8, r: Math.random() * 6, vr: (Math.random() - 0.5) * 0.4,
+        c: CONFETTI_COLOURS[Math.floor(Math.random() * CONFETTI_COLOURS.length)], life: 0 });
+    }
+    if (!confettiRunning) { confettiRunning = true; requestAnimationFrame(confettiFrame); }
+  } catch (error) { /* no canvas: no confetti */ }
+}
+function confettiFrame() {
+  const ctx = confettiCanvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+  confettiBits.forEach((b) => {
+    b.vy += 0.32; b.vx *= 0.99; b.x += b.vx; b.y += b.vy; b.r += b.vr; b.life += 1;
+    ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.r);
+    ctx.fillStyle = b.c; ctx.fillRect(-b.w / 2, -b.h / 2, b.w, b.h * Math.abs(Math.cos(b.life / 6)));
+    ctx.restore();
+  });
+  confettiBits = confettiBits.filter((b) => b.y < window.innerHeight + 40 && b.life < 400);
+  if (confettiBits.length) requestAnimationFrame(confettiFrame);
+  else { confettiRunning = false; ctx.clearRect(0, 0, window.innerWidth, window.innerHeight); }
+}
+function bigCelebration(title, words) {
+  const w = window.innerWidth;
+  confetti(220, w * 0.2, window.innerHeight * 0.55, 1.6);
+  setTimeout(() => confetti(220, w * 0.8, window.innerHeight * 0.55, 1.6), 250);
+  setTimeout(() => confetti(260, w / 2, window.innerHeight * 0.45, 2.6), 550);
+  const old = document.querySelector(".treat-pop");
+  if (old) old.remove();
+  const pop = el("div", "treat-pop");
+  pop.setAttribute("role", "alertdialog");
+  const inner = el("div", "treat-pop-card");
+  inner.append(el("p", "treat-pop-small", "You earned it"), el("p", "treat-pop-big", title), el("p", "treat-pop-words", words));
+  const ok = button("Yesss", "treat-pop-ok", () => pop.remove());
+  inner.append(ok);
+  pop.append(inner);
+  pop.addEventListener("click", (e) => { if (e.target === pop) pop.remove(); });
+  document.body.append(pop);
+  setTimeout(() => ok.focus(), 50);
+}
+// Today's ticked lines (what she's just ticked counts at once).
+function doneTodayTexts() {
+  const today = isoDay(new Date());
+  return pageLines(today).filter((l) => l.kind === "line" && l.done).map((l) => l.raw);
+}
+function treatsData() {
+  const t = (state.pages && state.pages.treats) || {};
+  return { rules: treatRules(t.rules), got: t.got && typeof t.got === "object" ? t.got : {} };
+}
+function saveTreats(patch) {
+  const now = { ...((state.pages && state.pages.treats) || {}), ...patch };
+  state.pages.treats = now;
+  if (cloud) setDoc(doc(cloud.db, cloud.base + "pages/treats"), { ...patch, at: isoNow(new Date()) }, { merge: true }).catch(() => {});
+}
+function celebrateTick(raw) {
+  // A small burst for every tick, from where she pressed if we know it.
+  const x = pointerAt.x >= 0 ? pointerAt.x : undefined;
+  const y = pointerAt.y >= 0 ? pointerAt.y : undefined;
+  confetti(90, x, y, 2.4);
+  const today = isoDay(new Date());
+  const t = treatsData();
+  const got = Array.isArray(t.got[today]) ? t.got[today] : [];
+  const earned = treatsEarned(t.rules, doneTodayTexts(), got);
+  if (!earned.length) return;
+  saveTreats({ got: { ...t.got, [today]: got.concat(earned.map((r) => r.id)) } });
+  const r = earned[0];
+  setTimeout(() => bigCelebration(r.reward + "!", r.kind === "count"
+    ? r.n + " " + (r.n === 1 ? "task" : "tasks") + " done today. Go get your " + r.reward + "."
+    : "“" + lineLabel(r.task) + "” is done. Go get your " + r.reward + "."), 300);
+}
+
+// The treats card on the Day page: her rules, how far she's got, add one.
+function pageTreatsCard(day) {
+  const today = isoDay(new Date());
+  const t = treatsData();
+  const done = day === today ? doneTodayTexts() : [];
+  const got = Array.isArray(t.got[today]) ? t.got[today] : [];
+  const card = el("div", "page-card page-treats");
+  card.append(el("span", "page-label", "Treats"));
+  if (!t.rules.length) card.append(el("p", "muted", "Give yourself something to work for. Like: after 3 tasks, a Zbar."));
+  t.rules.forEach((r) => {
+    const row = el("div", "treat-row" + (got.includes(r.id) ? " got" : ""));
+    row.append(el("span", "treat-words", (r.kind === "count" ? "After " + r.n + " " + (r.n === 1 ? "task" : "tasks") : "When “" + lineLabel(r.task) + "” is done") + ": " + r.reward),
+               el("span", "treat-progress", got.includes(r.id) ? "Earned today" : day === today ? treatProgress(r, done) : ""),
+               button("Remove", "quiet smart-skip", () => saveTreats({ rules: t.rules.filter((x) => x.id !== r.id) }) || drawPage()));
+    card.append(row);
+  });
+  const add = el("div", "treat-add");
+  const kind = page.treatKind || "count";
+  add.append(smartChips("Treat for", [["count", "A number of tasks"], ["task", "One task"]], kind, (v) => { page.treatKind = v; drawPage(); }));
+  const row = el("div", "page-inline");
+  let what = null;
+  if (kind === "count") {
+    what = document.createElement("input");
+    what.type = "number"; what.min = "1"; what.max = "50"; what.value = "3";
+    what.setAttribute("aria-label", "How many tasks");
+    what.className = "treat-n";
+    row.append(el("span", "muted", "After"), what, el("span", "muted", "tasks, I get"));
+  } else {
+    what = document.createElement("select");
+    what.setAttribute("aria-label", "Which task");
+    pageLines(today).filter((l) => l.kind === "line" && !l.done && !String(l.raw).startsWith(">")).forEach((l) => {
+      const o = document.createElement("option"); o.value = l.raw; o.textContent = lineLabel(l.raw); what.append(o);
+    });
+    row.append(el("span", "muted", "When"), what, el("span", "muted", "is done, I get"));
+  }
+  const reward = document.createElement("input");
+  reward.placeholder = "a Zbar";
+  reward.setAttribute("aria-label", "The treat");
+  const save = () => {
+    const r = reward.value.trim();
+    if (!r) { reward.focus(); return; }
+    const rule = kind === "count" ? { id: "t" + Date.now(), kind, n: Number(what.value) || 3, reward: r }
+      : { id: "t" + Date.now(), kind, task: what.value, reward: r };
+    if (kind === "task" && !rule.task) return;
+    saveTreats({ rules: t.rules.concat([rule]) });
+    page.said = "Deal. " + (kind === "count" ? "After " + rule.n + " tasks today" : "When “" + lineLabel(rule.task) + "” is done") + ", " + r + ".";
+    drawPage();
+  };
+  reward.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
+  row.append(reward, button("Add", "", save));
+  add.append(row);
+  card.append(add);
+  return card;
 }
 
 function noDayCard() {
@@ -4548,8 +4699,11 @@ function pageNowCard(day, lines, times, found) {
     const late = el("div", "now-late");
     late.append(el("span", "muted", "Running over?"));
     [15, 30, 60].forEach((m) => late.append(button("+" + m + " min", "quiet", () => {
-      shiftDay(day, m);
-      page.said = "Everything still to come today is " + m + " minutes later.";
+      // 2026-10-20e: only says it moved things when something did.
+      const from = nowMin - 15;
+      const any = Object.keys(times).some((k) => { const p = k.startsWith(day + "|") && timeParts(times[k]); return p && p.start >= from; });
+      if (any) shiftDay(day, m);
+      page.said = any ? "Everything still to come today is " + m + " minutes later." : "Nothing with a time is still to come today.";
       drawPage();
     })));
     card.append(row, late);
@@ -4714,7 +4868,7 @@ function drawPage() {
   box.append(top);
   const body = el("div", "page-body");
   const right = el("div", "page-right");
-  right.append(pageTaskList(day, lines, times), pageNotesCard(day, data), pageFunCard());   // 2026-10-19o: fun stuff bank
+  right.append(pageTaskList(day, lines, times), pageTreatsCard(day), pageNotesCard(day, data), pageFunCard());   // 2026-10-19o: fun stuff bank; 2026-10-20e: treats
   const carry = pageCarryCard(day, lines, data);
   if (carry) right.append(carry);
   body.append(pageBlocksCard(day, lines, times, eventsNow(found, Date.now())), right);
