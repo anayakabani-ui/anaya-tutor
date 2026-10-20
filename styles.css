@@ -1005,3 +1005,14 @@ body.popout #app { max-width: none; }
 .now-del:hover { color: var(--warn); }
 
 /* 2026-10-20f: the North Star in her blue, not gold ("i dont like that colour scheme"). */
+
+/* 2026-10-20h: priority columns, light to strong; no time blocks on the Day page. */
+.now-block.prio-ideally { background: color-mix(in srgb, var(--soft) 70%, var(--card)); }
+.now-block.prio-should { background: var(--soft); }
+.now-block.prio-want { background: color-mix(in srgb, var(--accent) 8%, var(--soft)); }
+.now-block.prio-have { background: color-mix(in srgb, var(--accent) 16%, var(--soft)); }
+.now-block.prio-have .now-block-head { color: var(--accent); }
+@media (min-width: 820px) {
+  .page-body.no-blocks { grid-template-columns: minmax(0, 1fr); }
+  .page-body.no-blocks .page-right { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+}
