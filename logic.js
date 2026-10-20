@@ -1540,7 +1540,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v66";   // 2026-10-20: was v65
+export const APP_VERSION = "v67";   // 2026-10-20b: was v66
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -2169,7 +2169,7 @@ export const SMART_SESSIONS = { yes: 1, kinda: 2, no: 3 };
 export const SMART_MOST = 40;
 export const SMART_MINUTES = { hw: 30, test: 25, other: 20 };
 export const SMART_BREAK = 10;
-export const SMART_PER_DAY = 4;                     // new pieces on one day, at most
+export const SMART_PER_DAY = 12;                    // new pieces on one day, at most (2026-10-20b: was 4; the time a day is the real limit)
 // What an earlier smart plan put on her days (the clean-up finds these).
 export const SMART_MADE = /^(HW: .+|Go over .+ \(\d+ of \d+\))$/;
 const SMART_STEP = /^['"‘’]?\s*(-+>|>|→)/;   // "--> create name", a step of the task above
@@ -2238,7 +2238,12 @@ export function smartDefaults(today) {
   const term = HALF_TERMS.find((t) => now >= t.from && now <= t.to);
   const deadline = term && term.to > start ? term.to : smartDay(start, 7);
   // 2026-10-20: two hours a day, from 9am (today: from when she's planning).
-  return { start, deadline, light: late ? [start] : [], budget: 120, dayStart: 9 * 60 };
+  // 2026-10-20b: "its not a school day- i ahve from 8am-7pm more or less":
+  // in a holiday six hours a day, 8am to 7pm.
+  if (term) return { start, deadline, light: late ? [start] : [], budget: 360, dayStart: 8 * 60, dayEnd: 19 * 60,
+                     spread: "even", piece: 0, timeAll: true };
+  return { start, deadline, light: late ? [start] : [], budget: 120, dayStart: 9 * 60, dayEnd: 21 * 60,
+           spread: "even", piece: 0, timeAll: true };
 }
 
 // Free time on a day: from `from` on, skipping what already has a time.
@@ -2253,78 +2258,126 @@ function smartFree(busy, from, mins) {
   return at + mins <= 23 * 60 ? at : null;
 }
 
-// steps: {act: "add" | "move" | "keep", text, day, at, mins, subject, from, pick}.
-// opts: start, light, budget (minutes of new work a day), dayStart (minutes
-// after midnight), nowMin (minutes now, for today).
+// steps: {act: "add" | "move" | "keep" | "time", id, text, day, at, mins, subject, from, pick}.
+// opts: start, light, budget (minutes of work a day, what's already on the
+// day counts), dayStart / dayEnd (minutes after midnight), nowMin (today),
+// spread ("even": the least full day; "early": the first day with room),
+// piece (minutes for each piece, 0 = by kind), timeAll (her untimed lines on
+// those days get a time too), skip (ids "day|words" she took out).
+// must: true, "maybe" (only if there's room once the musts are in), false.
+// 2026-10-20b: "its unevene", "why isnt it adding more across?", "i want the
+// optio nto like say 'spread each across'", "maybe i can cut down on time",
+// "no options to put any of the tasks tehere", "which tasks are ok not to do".
+const SMART_GO_OVER = /^Go over (.+) \((\d+) of (\d+)\)$/;
 export function smartPlan(items, answers, found, today, deadline, opts) {
   const o = opts || {};
   const todayIso = isoDay(today);
   const now = SMART_ISO.test(String(o.start || "")) && String(o.start) > todayIso ? String(o.start) : todayIso;
   const light = new Set(Array.isArray(o.light) ? o.light : []);
-  const budget = Math.max(30, Math.min(480, Number(o.budget) || 120));
+  const skip = new Set(Array.isArray(o.skip) ? o.skip : []);
+  const budget = Math.max(30, Math.min(720, Number(o.budget) || 120));
   const dayStart = Math.max(5 * 60, Math.min(14 * 60, Number(o.dayStart) || 9 * 60));
+  const dayEnd = Math.max(dayStart + 60, Math.min(23 * 60, Number(o.dayEnd) || 21 * 60));
+  const spread = o.spread === "early" ? "early" : "even";
+  const piece = Math.max(0, Math.min(120, Number(o.piece) || 0));
   const fallback = SMART_ISO.test(String(deadline || "")) ? String(deadline) : smartDay(now, 7);
-  const used = {};                 // minutes of new work put on a day
-  const count = {};                // new pieces on a day
-  const subj = {};                 // day -> subjects already there
+  const times = (found && found.times) || {};
+  const allDays = (found && found.days) || [];
+  // What's on each day already, in minutes.
+  const load = {};
+  const lineMins = (d, text) => { const p = timeParts(times[d + "|" + text]); return p && p.end !== null ? p.end - p.start : 20; };
+  allDays.forEach((d) => { load[d.day] = d.lines.filter((l) => !l.done).reduce((n, l) => n + lineMins(d.day, l.text), 0); });
+  const added = {};
+  const subj = {};
   const steps = [];
   const late = [];
   const unplaced = [];
-  const chosen = (items || []).map((it) => ({ ...it, ...((answers && answers[it.key]) || {}) })).filter((it) => it.must);
+  const all = (items || []).map((it) => ({ ...it, ...((answers && answers[it.key]) || {}) }));
   const byOf = (it) => {
     const own = SMART_ISO.test(String(it.by || "")) ? String(it.by) : fallback;
-    return own > fallback ? fallback : own;          // 2026-10-19r: the deadline is a cap
+    return own > fallback ? fallback : own;
   };
-  chosen.sort((a, b) => byOf(a).localeCompare(byOf(b)));
-  const fits = (d, mins) => (used[d] || 0) + mins <= budget && (count[d] || 0) < (light.has(d) ? 1 : SMART_PER_DAY);
-  const score = (d, it) => (used[d] || 0) + ((subj[d] || []).includes(it.subject || it.text) ? 60 : 0);
+  const musts = all.filter((it) => it.must === true).sort((a, b) => byOf(a).localeCompare(byOf(b)));
+  const maybes = all.filter((it) => it.must === "maybe").sort((a, b) => byOf(a).localeCompare(byOf(b)));
+  const fits = (d, mins) => (load[d] || 0) + mins <= budget && (added[d] || 0) < (light.has(d) ? 1 : SMART_PER_DAY);
+  const score = (d, it) => (load[d] || 0) + ((subj[d] || []).includes(it.subject || it.text) ? 45 : 0);
   const pickDay = (days, it, mins) => {
     const ok = days.filter((d) => fits(d, mins));
     if (!ok.length) return null;
+    if (spread === "early") return ok[0];
     return ok.reduce((best, d) => (score(d, it) < score(best, it) ? d : best), ok[0]);
   };
   const place = (it, text, day, act, mins) => {
-    steps.push({ act, text, day, at: "", mins, subject: it.subject || "", kind: it.kind,
+    const id = day + "|" + text;
+    if (skip.has(id)) return true;
+    steps.push({ act, id, text, day, at: "", mins, subject: it.subject || "", kind: it.kind,
                  from: it.from === "day" ? it.day : it.from, pick: it.pick });
-    if (act === "keep") return;
-    used[day] = (used[day] || 0) + mins;
-    count[day] = (count[day] || 0) + 1;
+    if (act === "keep") return true;
+    load[day] = (load[day] || 0) + mins;
+    added[day] = (added[day] || 0) + 1;
     (subj[day] = subj[day] || []).push(it.subject || it.text);
+    return true;
   };
-  chosen.forEach((it) => {
+  // "Go over" lines already on a day for this task count as goes already planned.
+  const goOvers = (text) => {
+    const out = [];
+    allDays.filter((d) => d.day >= todayIso).forEach((d) => d.lines.forEach((l) => {
+      const m = SMART_GO_OVER.exec(String(l.text || "").trim());
+      if (m && m[1] === text && !l.done) out.push({ day: d.day, text: l.text });
+    }));
+    return out;
+  };
+  const planOne = (it, optional) => {
     const by = byOf(it);
-    if (by < now) late.push(it.text);
+    if (by < now && !optional) late.push(it.text);
     let last = it.kind === "other" ? by : smartDay(by, -1);
     if (last < now) last = now;
     const range = [];
     for (let d = now; d <= last && range.length < 60; d = smartDay(d, 1)) range.push(d);
-    const mins = SMART_MINUTES[it.kind] || 20;
+    const mins = piece || SMART_MINUTES[it.kind] || 20;
+    const miss = () => { if (!optional) unplaced.push(it.text); };
     const home = (days) => {
-      if (it.from === "day" && it.day <= last && it.day >= now) return place(it, it.text, it.day, "keep", mins);
+      if (it.from === "day" && it.day <= last && it.day >= now) return place(it, it.text, it.day, "keep", lineMins(it.day, it.text));
       const day = pickDay(days, it, mins) || pickDay(range, it, mins);
-      if (!day) { unplaced.push(it.text); return; }
+      if (!day) return miss();
       place(it, it.text, day, it.from === "hw" ? "add" : "move", mins);
     };
     if (it.kind === "test") {
+      const had = goOvers(it.text);
+      had.forEach((g) => place(it, g.text, g.day, "keep", lineMins(g.day, g.text)));
       const n = Math.max(1, Math.min(SMART_SESSIONS[it.confident] || 2, range.length));
       const size = range.length / n;
-      for (let i = 0; i < n; i++) {
+      for (let i = had.length; i < n - 1; i++) {
         const lo = Math.floor(i * size);
         const part = range.slice(lo, Math.max(Math.floor((i + 1) * size), lo + 1));
-        if (i < n - 1) {
-          const day = pickDay(part, it, mins);
-          if (day) place(it, "Go over " + it.text + " (" + (i + 1) + " of " + n + ")", day, "add", mins);
-        } else home(part);
+        const day = pickDay(part, it, mins) || pickDay(range, it, mins);
+        if (day) place(it, "Go over " + it.text + " (" + (i + 1) + " of " + n + ")", day, "add", mins);
+        else miss();
       }
-    } else if (it.kind === "hw") {
+      home(range.slice(Math.floor((n - 1) * size)));
+    } else if (it.kind === "hw" && spread === "early") {
       home(range.slice(0, Math.max(1, Math.ceil(range.length / 2))));
     } else {
       home(range);
     }
-  });
+  };
+  musts.forEach((it) => planOne(it, false));
+  maybes.forEach((it) => planOne(it, true));
+  // Her lines on those days with no time get one too, if she wants.
+  const span = [];
+  for (let d = now; d <= fallback && span.length < 60; d = smartDay(d, 1)) span.push(d);
+  if (o.timeAll !== false) {
+    const taken = new Set(steps.map((st) => st.day + "|" + st.text));
+    allDays.filter((d) => span.includes(d.day)).forEach((d) => d.lines.forEach((l) => {
+      const t = String(l.text || "").trim();
+      const id = d.day + "|" + t;
+      if (l.done || !t || taken.has(id) || times[id] || skip.has(id) || t.startsWith(">")) return;
+      steps.push({ act: "time", id, text: t, day: d.day, at: "", mins: 20, subject: "", kind: "other", from: d.day, pick: false });
+    }));
+  }
   // Times: from the start of her day (today: from now), a break after each,
-  // round what already has a time, and no two of one subject back to back.
-  const times = (found && found.times) || {};
+  // round what already has a time, no two of one subject back to back, and
+  // nothing after the end of her day.
   const events = (found && found.events) || [];
   const days = {};
   steps.forEach((st) => { (days[st.day] = days[st.day] || []).push(st); });
@@ -2341,9 +2394,8 @@ export function smartPlan(items, answers, found, today, deadline, opts) {
     });
     let cursor = dayStart;
     if (d === todayIso && Number.isFinite(Number(o.nowMin))) cursor = Math.max(cursor, Math.ceil((Number(o.nowMin) + 5) / 15) * 15);
-    const fresh = days[d].filter((st) => st.act !== "keep");
+    const pool = days[d].filter((st) => st.act !== "keep" || !times[st.id]);
     const order = [];
-    const pool = fresh.slice();
     while (pool.length) {
       const prev = order.length ? order[order.length - 1].subject : null;
       const i = pool.findIndex((st) => !st.subject || st.subject !== prev);
@@ -2351,15 +2403,17 @@ export function smartPlan(items, answers, found, today, deadline, opts) {
     }
     order.forEach((st) => {
       const at = smartFree(busy, cursor, st.mins);
-      if (at === null) return;
+      if (at === null || at + st.mins > dayEnd) return;
       st.at = timeSpan(at, at + st.mins);
       busy.push({ start: at, end: at + st.mins });
       cursor = at + st.mins + SMART_BREAK;
     });
     days[d] = days[d].slice().sort((a, b) => (a.at || "99").localeCompare(b.at || "99"));
   });
-  return { steps, late, days, unplaced, changes: steps.filter((st) => st.act !== "keep").length,
-           minutes: steps.filter((st) => st.act !== "keep").reduce((n, st) => n + st.mins, 0) };
+  const fresh = steps.filter((st) => st.act === "add" || st.act === "move");
+  return { steps, late, days, unplaced, load,
+           changes: steps.filter((st) => st.act !== "keep" && (st.act !== "time" || st.at)).length,
+           minutes: fresh.reduce((n, st) => n + st.mins, 0) };
 }
 
 // 2026-10-20: the clean-up. Lines an earlier smart plan put on her days, from
