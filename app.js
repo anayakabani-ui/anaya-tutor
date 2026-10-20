@@ -40,7 +40,8 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          smartItems, smartPlan, smartDefaults, smartLeftovers, smartReadWords, smartLevelOf, smartSubjectKey, SMART_LEVELS,
          NOW_BLOCKS, nowBlocks, nowPick, nowRollover, nowBlockOf,
          treatRules, treatsEarned, treatProgress,
-         NOW_PRIOS, nowColumns, nowPickPrio, nowPrioOf } from "./logic.js";   // 2026-10-20h   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
+         NOW_PRIOS, nowColumns, nowPickPrio, nowPrioOf,
+         guessSubjectLoose, linkParts } from "./logic.js";   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
 
 const $ = (id) => document.getElementById(id);
 // 2026-10-18b: a line's subject, by its words, from the bank's subject lists.
@@ -3355,7 +3356,8 @@ function drawChats() {
   const bySubject = new Map();
   [...state.chats].sort((a, b) => String(b.added).localeCompare(String(a.added)))
     .forEach((chat) => {
-      const name = chat.subject || "Other";
+      // 2026-10-20j: one saved as Other whose title names a subject goes under it.
+      const name = (!chat.subject || chat.subject === "Other") ? (guessSubjectLoose(chat.title || "", subjectNames()) || "Other") : chat.subject;
       if (!bySubject.has(name)) bySubject.set(name, []);
       bySubject.get(name).push(chat);
     });
@@ -3403,7 +3405,8 @@ function drawChatForm(box) {
     const parsed = parseGeminiChat(text.value);
     let picked = subject.value;
     if (picked === "Work it out for me") {
-      picked = guessSubject(text.value, subjectNames()) || "Other";
+      // 2026-10-20j: the title too, and short names (bio, chem, geo, dt).
+      picked = guessSubjectLoose(title.value + " " + (parsed.title || "") + " " + text.value, subjectNames()) || "Other";
     }
     save.disabled = true;
     try {
@@ -3428,7 +3431,8 @@ function drawChatForm(box) {
 
 function drawChatOpen(box, chat) {
   box.append(button("Back to chats", "link", () => { state.chatView = null; drawChats(); }));
-  box.append(el("h2", "", (chat.subject || "Other") + ", " + dayText(chat.added, new Date())));
+  const shown = (!chat.subject || chat.subject === "Other") ? (guessSubjectLoose(chat.title || "", subjectNames()) || "Other") : chat.subject;
+  box.append(el("h2", "", shown + ", " + dayText(chat.added, new Date())));
   box.append(el("p", "big", chat.title || "Chat"));
   if (chat.assessment) {
     box.append(el("h2", "", "Final assessment"));
@@ -3438,9 +3442,29 @@ function drawChatOpen(box, chat) {
   (chat.turns || []).forEach((turn) => {
     const part = el("div", "turn " + (names[turn.who] ? turn.who : "note"));
     part.append(el("span", "who", names[turn.who] || "Notes"));
-    part.append(document.createTextNode(turn.text || ""));
+    // 2026-10-20j: "i want it to be ahyperlink". Links open in a new tab.
+    linkParts(turn.text || "").forEach((bit) => {
+      if (!bit.href) { part.append(document.createTextNode(bit.text)); return; }
+      const link = el("a", "chat-link", bit.text);
+      link.href = bit.href; link.target = "_blank"; link.rel = "noopener noreferrer";
+      part.append(link);
+    });
     box.append(part);
   });
+  // 2026-10-20j: put a chat in the right subject.
+  const move = el("label", "chat-move");
+  move.append(el("span", "muted", "Subject "));
+  const pick = el("select");
+  [...new Set([...subjectNames(), chat.subject || "Other", "Other"])].forEach((name) => {
+    const o = el("option", "", name); o.value = name; if (name === (chat.subject || "Other")) o.selected = true; pick.append(o);
+  });
+  pick.addEventListener("change", () => {
+    chat.subject = pick.value;
+    setDoc(doc(cloud.db, cloud.base + "gemini_chats/" + chat.id), { subject: pick.value }, { merge: true }).catch(() => {});
+    drawChats();
+  });
+  move.append(pick);
+  box.append(move);
   // Two presses to delete, so one slip can't lose a chat.
   const remove = button("Delete this chat", "danger", () => {
     if (remove.dataset.sure !== "yes") {
