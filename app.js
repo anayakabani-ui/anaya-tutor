@@ -557,7 +557,8 @@ function tickDay(line) {
 // ---- 2026-10-20e: "i also want confetti", "i want it to be a huge
 // celebration". A burst of confetti on every tick; a treat earned gets the
 // big one: three bursts and a card in the middle of the screen.
-const CONFETTI_COLOURS = ["#6E2585", "#BDABCC", "#FFCB05", "#E86AA6", "#4C8DF6", "#7CC76A", "#EE6E66", "#14B8A6", "#F2A93B"];
+// 2026-10-20f: "why purple and yellow? i dont like that colour scheme". Her site's own colours.
+const CONFETTI_COLOURS = ["#1F6F99", "#4C8DF6", "#14B8A6", "#2FA59B", "#7CC76A", "#E86AA6", "#EE6E66", "#F2A93B"];
 let confettiCanvas = null;
 let confettiBits = [];
 let confettiRunning = false;
@@ -4667,20 +4668,50 @@ function pageRollover(found, today) {
   page.said = "Morning. " + left.length + " from yesterday " + (left.length === 1 ? "is" : "are") + " on today now.";
 }
 
+// 2026-10-20f: a task dropped on a block goes after the last one there
+// (today's current block: from now), keeping its length; on "Any time" it
+// loses its time.
+function nowMoveTo(day, raw, key, from, to, list, times, nowMin) {
+  if (key === "any") { sendTime(day, raw, ""); page.said = "“" + lineLabel(raw) + "” is any time now."; drawPage(); return; }
+  const own = timeParts(times[day + "|" + raw]);
+  const length = own && own.end !== null ? own.end - own.start : 30;
+  const others = list.filter((l) => l.raw !== raw).map((l) => timeParts(times[day + "|" + l.raw])).filter(Boolean);
+  let start = Math.max(from, key === nowBlockOf(nowMin) ? Math.ceil(nowMin / 15) * 15 : from, key === "morning" ? 8 * 60 : from);
+  others.forEach((p) => { start = Math.max(start, p.end !== null ? p.end : p.start + 30); });
+  if (start + length > to) start = Math.max(from, to - length);
+  sendTime(day, raw, timeSpan(start, start + length));
+  page.said = "“" + lineLabel(raw) + "” is at " + clockWords(hhmm(start)) + " now.";
+  drawPage();
+}
+
 function pageNowCard(day, lines, times, found) {
   const now = new Date();
   const nowMin = now.getHours() * 60 + now.getMinutes();
-  const card = el("div", "page-card now-card");
-  const pick = nowPick(lines, day, times, nowMin, page.nowRaw);
-  card.append(el("span", "page-label", "Now"));
+  // 2026-10-20f: "why is it red?" The whole card took the task's subject
+  // colour. Now the card stays plain; the subject is a small dot.
+  // "add a hdie button": Hide folds it to one line (kept on this device).
+  const folded = Boolean(recall("tutor-now-folded", false));
+  const live = lines.filter((l) => !deleting(day, l.raw));
+  const card = el("div", "page-card now-card" + (folded ? " folded" : ""));
+  const head = el("div", "now-head");
+  head.append(el("span", "page-label", "Now"),
+    button(folded ? "Show" : "Hide", "plan-check-fold", () => { keep("tutor-now-folded", !folded); drawPage(); }));
+  card.append(head);
+  const pick = nowPick(live, day, times, nowMin, page.nowRaw);
+  const dot = (raw) => {
+    const c = subjectColour(subjectFor({ text: raw }));
+    const d = el("span", "now-dot");
+    if (c) d.style.background = c; else d.classList.add("none");
+    return d;
+  };
   if (!pick) {
     card.append(el("p", "now-name", "Nothing left on today. Well done."));
   } else {
-    const colour = subjectColour(subjectFor({ text: pick.raw }));
-    if (colour) { card.classList.add("subj"); card.style.setProperty("--subj", colour); }
-    card.append(el("p", "now-name", lineLabel(pick.raw)));
+    const name = el("p", "now-name");
+    name.append(dot(pick.raw), document.createTextNode(lineLabel(pick.raw)));
+    card.append(name);
     const span = timeParts(times[day + "|" + pick.raw]);
-    if (span) card.append(el("p", "muted", "Planned " + clockWords(hhmm(span.start)) + (span.end !== null ? " to " + clockWords(hhmm(span.end)) : "")));
+    if (span && !folded) card.append(el("p", "muted", "Planned " + clockWords(hhmm(span.start)) + (span.end !== null ? " to " + clockWords(hhmm(span.end)) : "")));
     const row = el("div", "now-actions");
     row.append(
       button("Done", "now-done", () => {
@@ -4688,43 +4719,77 @@ function pageNowCard(day, lines, times, found) {
         page.nowRaw = null;
         page.said = "Ticked off “" + lineLabel(pick.raw) + "”. Next one's up.";
         drawPage();
-      }),
+      }));
+    if (!folded) row.append(
       button("Pick something else", "quiet", () => { page.nowChoose = !page.nowChoose; drawPage(); }),
       button("Not today", "quiet", () => {
         page.nowRaw = null;
         moveLine({ text: pick.raw, from: day }, addDayIso(day, 1));
         page.said = "“" + lineLabel(pick.raw) + "” is on tomorrow. That's fine.";
         drawPage();
+      }),
+      // 2026-10-20f: "i also want to be able like just delete this".
+      button("Delete", "quiet now-del", () => {
+        page.nowRaw = null;
+        deleteLine(day, pick.raw);
+        page.said = "Deleted “" + lineLabel(pick.raw) + "”. Ctrl+Z on the calendar brings it back.";
+        drawPage();
       }));
-    const late = el("div", "now-late");
-    late.append(el("span", "muted", "Running over?"));
-    [15, 30, 60].forEach((m) => late.append(button("+" + m + " min", "quiet", () => {
-      // 2026-10-20e: only says it moved things when something did.
-      const from = nowMin - 15;
-      const any = Object.keys(times).some((k) => { const p = k.startsWith(day + "|") && timeParts(times[k]); return p && p.start >= from; });
-      if (any) shiftDay(day, m);
-      page.said = any ? "Everything still to come today is " + m + " minutes later." : "Nothing with a time is still to come today.";
-      drawPage();
-    })));
-    card.append(row, late);
+    card.append(row);
+    if (!folded) {
+      const late = el("div", "now-late");
+      late.append(el("span", "muted", "Running over?"));
+      [15, 30, 60].forEach((m) => late.append(button("+" + m + " min", "quiet", () => {
+        // 2026-10-20e: only says it moved things when something did.
+        const from = nowMin - 15;
+        const any = Object.keys(times).some((k) => { const p = k.startsWith(day + "|") && timeParts(times[k]); return p && p.start >= from; });
+        if (any) shiftDay(day, m);
+        page.said = any ? "Everything still to come today is " + m + " minutes later." : "Nothing with a time is still to come today.";
+        drawPage();
+      })));
+      card.append(late);
+    }
   }
-  // Today in blocks; press one to do it now.
-  const blocks = nowBlocks(lines, day, times);
+  if (folded) return card;
+  // Today in blocks. Press one to do it now; drag it to another block to
+  // move it there (2026-10-20f: "i cant move tasks around"); x deletes it.
+  const blocks = nowBlocks(live, day, times);
   const here = nowBlockOf(nowMin);
-  const wrap = el("div", "now-blocks" + (page.nowChoose ? " open" : ""));
-  NOW_BLOCKS.concat([["any", "Any time"]]).forEach(([key, label]) => {
+  const wrap = el("div", "now-blocks");
+  NOW_BLOCKS.concat([["any", "Any time", 0, 0]]).forEach(([key, label, from, to]) => {
     const list = blocks[key] || [];
-    if (!list.length) return;
     const b = el("div", "now-block" + (key === here ? " here" : ""));
     b.append(el("p", "now-block-head", label + (key === here ? " (now)" : "")));
+    b.addEventListener("dragover", (e) => { e.preventDefault(); b.classList.add("over"); });
+    b.addEventListener("dragleave", () => b.classList.remove("over"));
+    b.addEventListener("drop", (e) => {
+      e.preventDefault();
+      b.classList.remove("over");
+      const raw = e.dataTransfer.getData("text/plain");
+      if (!raw) return;
+      nowMoveTo(day, raw, key, from, to, list, times, nowMin);
+    });
     list.forEach((l) => {
-      const chip = button(lineLabel(l.raw), "now-chip" + (pick && l.raw === pick.raw ? " on" : ""), () => {
+      const item = el("div", "now-item");
+      const chip = button("", "now-chip" + (pick && l.raw === pick.raw ? " on" : ""), () => {
         page.nowRaw = l.raw; page.nowChoose = false; drawPage();
       });
-      const c = subjectColour(subjectFor({ text: l.raw }));
-      if (c) { chip.classList.add("subj"); chip.style.setProperty("--subj", c); }
-      b.append(chip);
+      chip.append(dot(l.raw), document.createTextNode(lineLabel(l.raw)));
+      chip.draggable = true;
+      chip.title = "Press to do it now. Drag it to another block to move it.";
+      chip.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/plain", l.raw); e.dataTransfer.effectAllowed = "move"; });
+      const x = button("×", "now-x", () => {
+        if (page.nowRaw === l.raw) page.nowRaw = null;
+        deleteLine(day, l.raw);
+        page.said = "Deleted “" + lineLabel(l.raw) + "”. Ctrl+Z on the calendar brings it back.";
+        drawPage();
+      });
+      x.setAttribute("aria-label", "Delete " + l.raw);
+      x.title = "Delete";
+      item.append(chip, x);
+      b.append(item);
     });
+    if (!list.length) b.append(el("p", "muted now-empty", "Drag a task here"));
     wrap.append(b);
   });
   card.append(wrap);
