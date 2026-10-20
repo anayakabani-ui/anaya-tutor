@@ -37,7 +37,7 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          splitLine, parseChat, chatWaiting, APP_VERSION, nowScroll, eventAfterDrag,
          planCheck, repeatWords, subjectColour, eventColour, EVENT_COLOURS,
          pageData, pageHabits, pageSlots, pageGaps, longerBy, pageSteps, carryList, PAGE_MOST_HABITS, PAGE_HABIT_IDEAS, PAGE_MOST_STARS, pageDoneBySlot,
-         smartItems, smartPlan, smartDefaults } from "./logic.js";   // 2026-10-19o: smart plan
+         smartItems, smartPlan, smartDefaults, smartLeftovers } from "./logic.js";   // 2026-10-19o: smart plan
 
 const $ = (id) => document.getElementById(id);
 // 2026-10-18b: a line's subject, by its words, from the bank's subject lists.
@@ -4197,6 +4197,14 @@ function pageSmartCard(found) {
     easy.append(el("span", "muted smart-q-hint", "one new thing at most"));
     card.append(easy);
     card.append(el("p", "muted smart-q-hint", "Nothing goes after the deadline. Anything due later is pulled in before it."));
+    // 2026-10-20: how much a day, and when the day starts (today: from now).
+    if (!s.budget) s.budget = 120;
+    if (!s.dayStart) s.dayStart = 9 * 60;
+    card.append(smartChips("Work a day", [[60, "1 hour"], [90, "1\u00bd hours"], [120, "2 hours"], [180, "3 hours"]], s.budget,
+      (v) => { s.budget = v; smartSave(); drawPage(); }));
+    card.append(smartChips("Day starts", [[8 * 60, "8am"], [9 * 60, "9am"], [10 * 60, "10am"], [11 * 60, "11am"], [12 * 60, "12pm"]], s.dayStart,
+      (v) => { s.dayStart = v; smartSave(); drawPage(); }));
+    card.append(el("p", "muted smart-q-hint", "Today it starts from now. A 10 minute break after each one."));
     if (!items.length) { card.append(el("p", "muted", "Nothing to plan. Your days and the bank are empty.")); return card; }
     const list = el("div", "smart-list");
     items.forEach((raw) => {
@@ -4231,17 +4239,28 @@ function pageSmartCard(found) {
     card.append(go);
     return card;
   }
-  // The plan.
-  const plan = smartPlan(items, s.answers, found, now, s.deadline, { start: s.start, light: s.light });   // 2026-10-19r
+  // The plan. 2026-10-20: at real times, coloured by subject, with what won't fit said.
+  const plan = smartPlan(items, s.answers, found, now, s.deadline,
+    { start: s.start, light: s.light, budget: s.budget || 120, dayStart: s.dayStart || 540, nowMin: now.getHours() * 60 + now.getMinutes() });
+  page.smartPlanNow = plan;
   if (!plan.steps.length) card.append(el("p", "muted", "Nothing's marked as a must do. Go back and pick some."));
+  if (plan.changes) card.append(el("p", "page-said", plan.changes + " new " + (plan.changes === 1 ? "piece" : "pieces") + ", about " +
+    minutesText(plan.minutes * 60) + " in all, at most " + minutesText((s.budget || 120) * 60) + " a day."));
   if (plan.late.length) card.append(el("p", "smart-late", "Already past the date: " + plan.late.join(", ") + ". They're on the first day."));
+  if (plan.unplaced.length) card.append(el("p", "smart-late", "Won't fit before the deadline: " + plan.unplaced.join(", ") +
+    ". Give yourself more time a day, a later deadline, or say No to something."));
   Object.keys(plan.days).sort().forEach((day) => {
     const box = el("div", "smart-day");
-    box.append(el("h3", "smart-day-head", dayHead(day, now)));
+    const fresh = plan.days[day].filter((st) => st.act !== "keep").reduce((n, st) => n + st.mins, 0);
+    box.append(el("h3", "smart-day-head", dayHead(day, now) + (fresh ? "  \u00b7  " + minutesText(fresh * 60) : "")));
     plan.days[day].forEach((st) => {
       const line = el("div", "smart-step " + st.act);
-      line.append(el("span", "smart-step-tag", st.act === "add" ? "New" : st.act === "move" ? "Moved here" : "Already here"),
-                  el("span", "smart-step-text", st.text));
+      const colour = subjectColour(st.subject) || subjectColour(subjectFor({ text: st.text }));
+      if (colour) { line.classList.add("subj"); line.style.setProperty("--subj", colour); }
+      const span = timeParts(st.at);
+      line.append(el("span", "smart-step-time", span ? clockWords(hhmm(span.start)) : st.act === "keep" ? "" : "no time"),
+                  el("span", "smart-step-text", st.text),
+                  el("span", "smart-step-tag", st.act === "add" ? "New" : st.act === "move" ? "Moved here" : "Already here"));
       box.append(line);
     });
     card.append(box);
@@ -4256,6 +4275,47 @@ function pageSmartCard(found) {
             button("Close", "quiet", () => { page.smart = null; smartSave(); drawPage(); }));
   card.append(go);
   return card;
+}
+
+// 2026-10-20: the clean-up for what an earlier smart plan piled on her days.
+// She sees the list and presses Remove; nothing goes till she does.
+function smartCleanCard(found) {
+  const list = smartLeftovers(found, recall("tutor-smart-made", []), new Date());
+  if (!list.length && !page.cleanSaid) return null;
+  const card = el("div", "page-card smart-clean");
+  card.append(el("span", "page-label", "Clean up the smart plan"));
+  if (page.cleanSaid) card.append(el("p", "page-said", page.cleanSaid));
+  if (!list.length) { card.append(button("OK", "quiet", () => { page.cleanSaid = ""; drawPage(); })); return card; }
+  card.append(el("p", "", "The last smart plan put " + list.length + " things on your days (the \u201cHW:\u201d and \u201cGo over\u201d ones). Your real tasks stay where they are."));
+  const byDay = {};
+  list.forEach((l) => { byDay[l.day] = (byDay[l.day] || 0) + 1; });
+  card.append(el("p", "muted", Object.keys(byDay).sort().map((d) => dayHead(d, new Date()) + ": " + byDay[d]).join(" \u00b7 ")));
+  const shown = el("details", "smart-clean-list");
+  shown.append(el("summary", "", "See them"));
+  list.forEach((l) => shown.append(el("div", "muted", dayHead(l.day, new Date()) + ": " + l.text)));
+  card.append(shown);
+  const go = button(page.cleaning ? "Removing..." : "Remove all " + list.length, "", () => smartClean(list));
+  go.disabled = Boolean(page.cleaning);
+  card.append(go);
+  return card;
+}
+
+async function smartClean(list) {
+  if (page.cleaning) return;
+  page.cleaning = true;
+  let done = 0;
+  let gone = 0;
+  const within = (p) => Promise.race([Promise.resolve(p), new Promise((r) => setTimeout(() => r("slow"), 8000))]);
+  for (const l of list) {
+    page.cleanSaid = "Removing: " + done + " of " + list.length + ". Keep this page open.";
+    drawPage();
+    try { if (await within(sendEdit({ kind: "day_del", day: l.day, text: l.text }))) gone += 1; } catch (error) { /* next one */ }
+    done += 1;
+  }
+  page.cleaning = false;
+  keep("tutor-smart-made", []);
+  page.cleanSaid = "Sent " + gone + " to come off. The laptop takes them off in a minute or so while the tutor is open.";
+  drawPage();
 }
 
 // 2026-10-19s: "set it up seems to be unresponsive". Each step is two trips
@@ -4277,8 +4337,11 @@ async function smartApply(plan) {
     let ok = false;
     try {
       if (st.act === "add") ok = await within(sendEdit({ kind: "day_add", day: st.day, text: st.text }));
-      else if (st.from === "bank") ok = await within(st.pick ? pickToDay({ text: st.text, from: BANK_PICK }, st.day) : moveLine({ text: st.text, from: BANK }, st.day));
+      else if (st.from === "bank") ok = await within(st.pick ? pickToDay({ text: st.text, from: BANK_PICK }, st.day, st.at || "") : moveLine({ text: st.text, from: BANK }, st.day));
       else ok = await within(moveLine({ text: st.text, from: st.from }, st.day));
+      // 2026-10-20: "set it in the actual TIMED CALENDAR".
+      if (ok && st.at && !(st.from === "bank" && st.pick)) await within(sendEdit({ kind: "line_time", day: st.day, text: st.text, time: st.at }));
+      if (ok && st.act === "add") keep("tutor-smart-made", recall("tutor-smart-made", []).concat([{ day: st.day, text: st.text }]).slice(-300));
     } catch (error) {
       console.log("[smart] step failed", st.text, error);
       ok = false;
@@ -4379,6 +4442,8 @@ function drawPage() {
   bar.querySelectorAll(".page-step")[1].setAttribute("aria-label", "Day after");
   box.append(bar);
   if (!found) { box.append(el("p", "muted", "Waiting for the laptop. Open the tutor and your days show up here.")); return; }
+  const leftovers = smartCleanCard(found);                          // 2026-10-20
+  if (leftovers) box.append(leftovers);
   if (page.smart) { box.append(pageSmartCard(found)); return; }   // 2026-10-19o
   const lines = pageLines(day);
   const times = pageTimes();
