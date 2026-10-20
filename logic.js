@@ -1540,7 +1540,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v75";   // 2026-10-20j: was v74
+export const APP_VERSION = "v76";   // 2026-10-20k: was v75 (20j: was v74)
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -2633,13 +2633,21 @@ export function treatRules(raw) {
   return (Array.isArray(raw) ? raw : []).filter((r) => r && String(r.reward || "").trim() &&
     ((r.kind === "count" && Number(r.n) >= 1) || (r.kind === "task" && String(r.task || "").trim())))
     .map((r) => ({ id: String(r.id || ""), kind: r.kind, n: Math.max(1, Math.min(50, Math.round(Number(r.n) || 1))),
-                   task: String(r.task || "").trim(), reward: String(r.reward).trim().slice(0, 80) }));
+                   task: String(r.task || "").trim(), reward: String(r.reward).trim().slice(0, 80),
+                   day: /^\d{4}-\d{2}-\d{2}$/.test(String(r.day || "")) ? String(r.day) : "" }));
+}
+// 2026-10-20k: "its cause im planning for tmrw. it should do it by whatwever
+// im on". A rule made on a day's page is for that day (r.day); an older rule
+// with no day is for every day, as before.
+export function treatsForDay(rules, day) {
+  return treatRules(rules).filter((r) => !r.day || r.day === day);
 }
 // Which rules are earned now that weren't before. doneTexts: today's ticked lines.
-export function treatsEarned(rules, doneTexts, got) {
+export function treatsEarned(rules, doneTexts, got, day) {
   const have = new Set(got || []);
   const done = (doneTexts || []).map((t) => String(t).trim().toLowerCase());
-  return treatRules(rules).filter((r) => !have.has(r.id) &&
+  // 2026-10-20k: with a day, only that day's rules (and every-day ones) count.
+  return (day ? treatsForDay(rules, day) : treatRules(rules)).filter((r) => !have.has(r.id) &&
     (r.kind === "count" ? done.length >= r.n : done.includes(r.task.toLowerCase())));
 }
 export function treatProgress(rule, doneTexts) {
