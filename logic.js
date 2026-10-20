@@ -1540,7 +1540,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v68";   // 2026-10-20c: was v67
+export const APP_VERSION = "v69";   // 2026-10-20d: was v68
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -2567,4 +2567,59 @@ export function smartLeftovers(found, made, today) {
     });
   });
   return out;
+}
+
+
+// ---- 2026-10-20d: the Day page is her "today". "i can also pick what i want
+// to do- like forcing me to do dt when im feeling math is just wrong", "what
+// dont i want to do today? thats should be ok", "it shuffles it to tmrw only
+// when i wake up tmrw and some things arent done", "1 with 3 is best": one
+// thing at a time, loose blocks (morning, afternoon, evening), no clock.
+export const NOW_BLOCKS = [["morning", "Morning", 0, 12 * 60], ["afternoon", "Afternoon", 12 * 60, 17 * 60],
+                           ["evening", "Evening", 17 * 60, 24 * 60]];
+function nowOpen(lines) {
+  return (lines || []).filter((l) => l && l.kind === "line" && !l.done && !l.repeat &&
+    !String(l.raw || "").trim().startsWith(">"));
+}
+export function nowBlockOf(minute) {
+  const b = NOW_BLOCKS.find((x) => minute >= x[2] && minute < x[3]);
+  return b ? b[0] : "evening";
+}
+// Her open lines on a day in blocks; a line with no time is "any time".
+export function nowBlocks(lines, day, times) {
+  const out = { morning: [], afternoon: [], evening: [], any: [] };
+  nowOpen(lines).forEach((l) => {
+    const p = timeParts((times || {})[day + "|" + l.raw]);
+    if (!p) out.any.push(l); else out[nowBlockOf(p.start)].push({ ...l, start: p.start });
+  });
+  ["morning", "afternoon", "evening"].forEach((k) => out[k].sort((a, b) => a.start - b.start));
+  return out;
+}
+// What's on now: the one she picked if it's still open, else what's timed
+// for now, else the next one with a time, else the first with none.
+export function nowPick(lines, day, times, nowMin, chosen) {
+  const open = nowOpen(lines);
+  if (chosen) { const c = open.find((l) => l.raw === chosen); if (c) return c; }
+  const timed = open.map((l) => ({ l, p: timeParts((times || {})[day + "|" + l.raw]) })).filter((x) => x.p)
+    .sort((a, b) => a.p.start - b.p.start);
+  const on = timed.find((x) => x.p.start <= nowMin && (x.p.end !== null ? x.p.end : x.p.start + 30) > nowMin);
+  if (on) return on.l;
+  const next = timed.find((x) => x.p.start > nowMin);
+  if (next) return next.l;
+  const free = open.find((l) => !timeParts((times || {})[day + "|" + l.raw]));
+  return free || (timed.length ? timed[timed.length - 1].l : null);
+}
+// Yesterday's leftovers, moved to today once on the first open of a new day.
+export function nowRollover(found, today, locks) {
+  const now = isoDay(today);
+  const d = new Date(now + "T12:00:00");
+  d.setDate(d.getDate() - 1);
+  const yesterday = isoDay(d);
+  const day = ((found && found.days) || []).find((x) => x.day === yesterday);
+  if (!day) return [];
+  const locked = locks || new Set();
+  return day.lines.filter((l) => {
+    const t = String(l.text || "").trim();
+    return t && !l.done && !t.startsWith(">") && !/^do \d+ from \[/i.test(t) && !locked.has(yesterday + "|" + t);
+  }).map((l) => ({ text: String(l.text).trim(), from: yesterday }));
 }
