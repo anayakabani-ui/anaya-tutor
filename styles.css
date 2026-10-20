@@ -966,3 +966,24 @@ body.popout #app { max-width: none; }
 .now-other { margin-top: 10px; }
 .now-other summary { cursor: pointer; color: var(--accent); margin-bottom: 6px; }
 .now-other .now-chip { margin-bottom: 4px; }
+
+/* 2026-10-20e: confetti, the big celebration, treats. */
+.confetti { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 9999; }
+.treat-pop { position: fixed; inset: 0; z-index: 9998; display: grid; place-items: center; background: rgba(20, 10, 30, 0.35); animation: tip-in 0.2s ease-out; }
+.treat-pop-card { background: var(--card); border-radius: 22px; padding: 28px 34px; text-align: center; max-width: min(420px, 90vw);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3); border-top: 8px solid #FFCB05; animation: treat-bounce 0.6s cubic-bezier(.2, 1.6, .4, 1); }
+.treat-pop-small { margin: 0; color: var(--muted); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.85rem; }
+.treat-pop-big { margin: 6px 0; font-size: 2.6rem; font-weight: 800; color: #6E2585; line-height: 1.1; overflow-wrap: anywhere; }
+.treat-pop-words { margin: 0 0 18px; font-size: 1.05rem; }
+.treat-pop-ok { width: auto; padding: 12px 34px; font-size: 1.1rem; background: #6E2585; }
+@keyframes treat-bounce { 0% { transform: scale(0.4); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+.page-treats .treat-row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 8px; }
+.page-treats .treat-row.got { background: color-mix(in srgb, #FFCB05 25%, transparent); }
+.treat-words { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.treat-progress { flex: none; font-size: 0.8rem; color: var(--muted); font-weight: 600; }
+.treat-add { margin-top: 8px; }
+.treat-add .page-inline { flex-wrap: wrap; align-items: center; }
+.treat-add .page-inline span { flex: none; }
+.treat-add input.treat-n { width: 70px; flex: none; }
+.treat-add select { flex: 1 1 140px; min-width: 0; margin: 0; padding: 8px; border-radius: 8px; }
+@media (prefers-reduced-motion: reduce) { .treat-pop-card { animation: none; } }
