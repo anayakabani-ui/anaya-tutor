@@ -1065,3 +1065,73 @@ body.popout #app { max-width: none; }
   text-shadow: 0 2px 8px color-mix(in srgb, var(--card) 80%, transparent); animation: cheer-up 1.4s ease-out forwards; }
 @keyframes cheer-up { 0% { opacity: 0; transform: translateY(8px) scale(0.8); } 15% { opacity: 1; transform: translateY(0) scale(1.1); } 100% { opacity: 0; transform: translateY(-60px) scale(1); } }
 @media (prefers-reduced-motion: reduce) { .cheer { animation: none; opacity: 0.9; } }
+
+/* ---- 2026-10-21f: the task bank at the side (left or right), as wide as
+   she pulls it; the blue dashes to put a task between two; steps; the task
+   she's on. Her site's blues and teals. */
+.cal-dock { display: flex; align-items: flex-start; gap: 0; }
+.cal-main { flex: 1 1 auto; min-width: 0; }
+.cal-side { flex: 0 0 auto; min-width: 0; position: sticky; top: 8px; align-self: flex-start; }
+.cal-side .plan-bank { margin-top: 8px; display: flex; flex-direction: column; max-height: calc(100vh - 24px); overflow: hidden; }
+.cal-side .bank-grid { max-height: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)) !important; }
+.cal-side .plan-check-top { flex-wrap: wrap; row-gap: 6px; }
+.bank-place.ring-switch { margin-left: auto; }
+.bank-place .ring-chip { font-size: 12px; padding: 3px 9px; }
+.cal-side.shut { width: 46px; }
+.cal-side.shut .plan-bank { padding: 10px 4px; align-items: center; }
+.cal-side.shut .plan-check-top { flex-direction: column; gap: 10px; }
+.cal-side.shut .plan-head { writing-mode: vertical-rl; transform: rotate(180deg); margin: 0; white-space: nowrap; }
+.cal-side.shut .bank-place { display: none; }
+.cal-side.shut .plan-check-fold { padding: 4px 6px; font-size: 12px; }
+.bank-grip { flex: 0 0 12px; align-self: stretch; min-height: 200px; cursor: col-resize; position: relative; touch-action: none; }
+.bank-grip::after { content: ""; position: absolute; top: 40px; bottom: 40px; left: 5px; width: 2px; border-radius: 2px; background: var(--line); transition: background var(--ease); }
+.bank-grip:hover::after, .bank-grip.pulling::after { background: var(--accent); }
+.bank-grip.off { cursor: default; }
+.bank-grip.off::after { display: none; }
+
+.tg-insert { position: absolute; left: 0; right: 0; height: 0; z-index: 4; pointer-events: none; border-top: 2px dashed color-mix(in srgb, #2F8FE0 55%, transparent); opacity: .35; transition: opacity var(--ease); }
+.tg-col:hover .tg-insert, .tg-insert.on { opacity: 1; }
+.tg-insert-go { pointer-events: auto; position: absolute; left: 2px; top: -9px; width: 16px; height: 16px; padding: 0; border-radius: 50%; font-size: 13px; line-height: 14px; font-weight: 700; background: #2F8FE0; color: #fff; display: flex; align-items: center; justify-content: center; box-shadow: none; }
+.tg-insert-go:hover { background: #1F6391; transform: scale(1.15); }
+.tg-insert-box { position: absolute; left: 4px; right: 4px; z-index: 30; min-width: 220px; background: var(--card); border-radius: 12px; box-shadow: var(--shadow-up); padding: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; cursor: default; }
+.tg-insert-input { flex: 1 1 100%; min-width: 180px; width: 100%; margin: 0; padding: 7px 10px; font-size: 14px; }
+.tg-insert-len { display: flex; gap: 4px; flex-wrap: wrap; }
+.tg-insert-len .smart-chip { padding: 3px 8px; font-size: 12px; background: var(--soft); }
+.tg-insert-len .smart-chip.on { background: #2F8FE0; color: #fff; }
+button.tg-insert-add { width: auto !important; margin: 0 0 0 auto !important; padding: 5px 14px; font-size: 13px; }
+
+.tg-item-steps { font-size: 11px; opacity: .8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.line-steps { font-size: 11px; opacity: .7; margin-left: 4px; }
+.tg-item.flow-on, .plan-line.flow-on { box-shadow: 0 0 0 2px #14B8A6, 0 0 14px color-mix(in srgb, #14B8A6 45%, transparent); }
+.pop-flow { display: flex; align-items: center; gap: 10px; margin: 8px 0 4px; }
+.pop-flow button { width: auto; margin: 0; padding: 6px 14px; font-size: 14px; background: #14B8A6; color: #fff; }
+.pop-flow-on { font-weight: 600; color: #0F8C80; }
+.pop-steps { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+.pop-steps-head { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--accent); }
+.pop-step { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 14px; }
+.pop-step input[type="checkbox"] { display: inline-block; width: 16px; height: 16px; padding: 0; margin: 0; flex: 0 0 auto; accent-color: #14B8A6; }
+.pop-step-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.pop-step.done .pop-step-text { text-decoration: line-through; opacity: .6; }
+.pop-step.next .pop-step-text { font-weight: 600; }
+.pop-step .icon-btn { padding: 2px; opacity: .5; }
+.pop-step .icon-btn:hover { opacity: 1; }
+.pop-step-input { width: 100%; margin: 6px 0 0; padding: 7px 10px; font-size: 13px; }
+
+.flow-bar { margin: 8px 0; padding: 10px 14px; border-radius: var(--r-card); background: color-mix(in srgb, #14B8A6 12%, var(--card)); border-left: 4px solid #14B8A6; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.flow-what { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; flex: 1 1 280px; min-width: 0; }
+.flow-dot { width: 10px; height: 10px; border-radius: 50%; background: #14B8A6; align-self: center; }
+.flow-label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.flow-name { font-weight: 700; font-size: 17px; overflow-wrap: anywhere; }
+.flow-step { font-size: 14px; color: #0F8C80; font-weight: 500; }
+.flow-till { font-size: 13px; }
+.flow-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.flow-acts button { width: auto; margin: 0; padding: 6px 12px; font-size: 14px; display: inline-flex; align-items: center; gap: 4px; }
+.flow-acts button.flow-done { background: #14B8A6; color: #fff; }
+.flow-break { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; padding-left: 6px; }
+.flow-break .smart-chip { padding: 4px 9px; font-size: 13px; }
+.flow-break .smart-chip.on { background: #E86AA6; color: #fff; }
+.flow-switch { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 6px; }
+.flow-switch .now-chip { width: auto; }
+@media (prefers-color-scheme: dark) {
+  .flow-step, .pop-flow-on { color: #5FD4C6; }
+}
