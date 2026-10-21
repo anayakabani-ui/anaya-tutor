@@ -1089,8 +1089,21 @@ body.popout #app { max-width: none; }
 .bank-grip.off { cursor: default; }
 .bank-grip.off::after { display: none; }
 
-.tg-insert { position: absolute; left: 0; right: 0; height: 0; z-index: 4; pointer-events: none; border-top: 2px dashed color-mix(in srgb, #2F8FE0 55%, transparent); opacity: .35; transition: opacity var(--ease); }
+.tg-insert { position: absolute; left: 0; right: 0; height: 0; z-index: 4; pointer-events: none; border-top: 2px dashed color-mix(in srgb, #2F8FE0 70%, transparent); opacity: .55; transition: opacity var(--ease), border-color var(--ease), box-shadow var(--ease); }
 .tg-col:hover .tg-insert, .tg-insert.on { opacity: 1; }
+/* 2026-10-21g: a task held over a line: the line lights up, the ones under it slide down to make room */
+.tg-insert.drop { opacity: 1; border-top: 3px solid #2F8FE0; box-shadow: 0 0 10px color-mix(in srgb, #2F8FE0 60%, transparent); z-index: 6; }
+.tg-item { transition: transform .18s ease, opacity .18s ease; }
+.tg-item.make-room { opacity: .85; }
+.tg-item.gathering, .plan-line.gathering { transform: scale(.82); opacity: .3; }
+@keyframes tg-land { 0% { transform: scale(.6); opacity: 0; } 70% { transform: scale(1.04); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+.tg-item.landing, .plan-line.landing { animation: tg-land .45s ease both; animation-delay: calc(var(--i, 0) * 60ms); }
+.drag-stack { position: fixed; left: -1000px; top: -1000px; width: 200px; height: 64px; pointer-events: none; }
+.drag-stack-card { position: absolute; left: 0; top: 0; width: 180px; padding: 6px 10px; border-radius: 10px; background: color-mix(in srgb, #2F8FE0 18%, #fff); border-left: 3px solid #2F8FE0; box-shadow: 0 4px 12px rgba(15,30,45,.18); font: 600 13px/1.3 var(--font); color: #16222C; display: flex; flex-direction: column; }
+.drag-stack-card.back { height: 44px; transform: translate(calc(var(--i) * 6px), calc(var(--i) * 6px)); opacity: .8; }
+.drag-stack-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.drag-stack-count { font-weight: 500; font-size: 12px; color: #1F6391; }
+@media (prefers-reduced-motion: reduce) { .tg-item, .tg-item.landing, .plan-line.landing { transition: none; animation: none; } }
 .tg-insert-go { pointer-events: auto; position: absolute; left: 2px; top: -9px; width: 16px; height: 16px; padding: 0; border-radius: 50%; font-size: 13px; line-height: 14px; font-weight: 700; background: #2F8FE0; color: #fff; display: flex; align-items: center; justify-content: center; box-shadow: none; }
 .tg-insert-go:hover { background: #1F6391; transform: scale(1.15); }
 .tg-insert-box { position: absolute; left: 4px; right: 4px; z-index: 30; min-width: 220px; background: var(--card); border-radius: 12px; box-shadow: var(--shadow-up); padding: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; cursor: default; }
