@@ -1051,3 +1051,17 @@ body.popout #app { max-width: none; }
 .now-block .now-add { display: flex; gap: 6px; margin-top: 6px; }
 .now-block .now-add input { flex: 1; min-width: 0; padding: 6px 8px; font-size: 0.88rem; }
 .now-block .now-add button { padding: 6px 10px; font-size: 0.85rem; }
+/* 2026-10-21c: mini lists in the Day page's Tasks card */
+.page-tasks .mini-list { margin: 4px 0; border-radius: var(--r-chip); background: color-mix(in srgb, var(--group) 6%, var(--card)); }
+.page-tasks .mini-list-head { display: flex; align-items: center; gap: 8px; width: 100%; background: transparent; color: var(--text); padding: 7px 10px; font-weight: 600; text-align: left; box-shadow: none; }
+.page-tasks .mini-list-head:hover { background: color-mix(in srgb, var(--group) 10%, var(--card)); box-shadow: none; }
+.page-tasks .mini-arrow { color: var(--group); width: 12px; }
+.page-tasks .mini-name { flex: 1; }
+.page-tasks .mini-count { color: var(--muted); font-weight: 500; font-size: 0.82rem; }
+.page-tasks .mini-list.all-done .mini-name { color: var(--muted); text-decoration: line-through; }
+.page-tasks .mini-list .page-task { padding-left: 26px; }
+/* 2026-10-21c: the word that floats up on every finish */
+.cheer { position: fixed; z-index: 10001; pointer-events: none; font-weight: 800; font-size: 1.35rem; color: var(--group);
+  text-shadow: 0 2px 8px color-mix(in srgb, var(--card) 80%, transparent); animation: cheer-up 1.4s ease-out forwards; }
+@keyframes cheer-up { 0% { opacity: 0; transform: translateY(8px) scale(0.8); } 15% { opacity: 1; transform: translateY(0) scale(1.1); } 100% { opacity: 0; transform: translateY(-60px) scale(1); } }
+@media (prefers-reduced-motion: reduce) { .cheer { animation: none; opacity: 0.9; } }
