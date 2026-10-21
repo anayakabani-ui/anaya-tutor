@@ -5103,6 +5103,33 @@ function pageNowCard(day, lines, times, found) {
       b.append(item);
     });
     if (!list.length) b.append(el("p", "muted now-empty", "Drag a task here"));
+    // 2026-10-21: "no add tasks button here. should be. adn should sync ofc".
+    // A new task goes on this day (the laptop gets it, like Add a task) and
+    // into this column.
+    if (page.nowAdd === key) {
+      const form = el("form", "now-add");
+      const field = el("input");
+      field.placeholder = "New task";
+      field.setAttribute("aria-label", "Add a task to " + label);
+      form.append(field, el("button", "", "Add"));
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const text = field.value.trim();
+        if (!text) { page.nowAdd = null; drawPage(); return; }
+        putBack(day, text, "");
+        const keepPrio = (state.pages[day] && state.pages[day].prio) || {};
+        savePage(day, { prio: { ...keepPrio, [text]: key } });
+        page.nowAdd = key;                 // stays open for the next one
+        page.said = "Added “" + text + "” to " + label + ".";
+        drawPage();
+        setTimeout(() => { const again = document.querySelector(".now-add input"); if (again) again.focus(); }, 0);
+      });
+      field.addEventListener("keydown", (e) => { if (e.key === "Escape") { page.nowAdd = null; drawPage(); } });
+      b.append(form);
+      setTimeout(() => { if (document.activeElement === document.body) field.focus(); }, 0);
+    } else {
+      b.append(button("+ Add", "quiet now-add-go", () => { page.nowAdd = key; drawPage(); setTimeout(() => { const f = document.querySelector(".now-add input"); if (f) f.focus(); }, 0); }));
+    }
     wrap.append(b);
   });
   card.append(wrap);
