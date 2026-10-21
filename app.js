@@ -43,7 +43,9 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          DOING_MINUTES, DOING_AGAIN_MIN, doingOf, doingLeft, doingUntil,
          PAGE_PRAYERS, PAGE_MEALS, dayExtras, parseClock12, schoolSummary,   // 2026-10-21
          NOW_PRIOS, nowColumns, nowPickPrio, nowPrioOf,
-         guessSubjectLoose, linkParts, pageGroups } from "./logic.js";   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
+         guessSubjectLoose, linkParts, pageGroups,
+         BANK_DOCKS, bankWhere, bankWidth, stepsOf, stepsWords, stepsLeft, flowTasks, insertGap, insertMarks,   // 2026-10-21f
+         roundDown5, flowExtend, flowAfterDone, flowSwitch, flowBreak } from "./logic.js";   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
 
 const $ = (id) => document.getElementById(id);
 // 2026-10-18b: a line's subject, by its words, from the bank's subject lists.
@@ -129,6 +131,10 @@ const state = { tasks: [], exams: [], timetable: [], visits: [], day: null, meta
                 // renamed; tasks typed onto a day or into the bank.
                 eventsEdited: new Map(), calRename: "", calAdding: "", addsWaiting: [],
                 goalsWaiting: new Map(),
+                // 2026-10-21f: where the bank sits, how wide, its scroll; a
+                // task being put between two; the task she's on (flow).
+                bankDock: recall("tutor-bank-dock", "right"), bankW: Number(recall("tutor-bank-width", 340)) || 340, bankScroll: 0,
+                calInsert: null, flow: recall("tutor-flow", null), flowBreakYt: false,
                 pages: {} };            // 2026-10-19i: the Day page, pages/<day>   // 2026-10-18: list -> {count, by, atMs}
 let cloud = null;                     // {db, base} once she's signed in
 
@@ -1444,7 +1450,7 @@ function addTaskBox(day, list) {
     if (state.calAdding && input.isConnected) { if (input.value.trim()) send(); else { state.calAdding = ""; drawCalendar(); } }
   }, 150));
   wrap.append(input);
-  requestAnimationFrame(() => input.focus());
+  requestAnimationFrame(() => input.focus({ preventScroll: true }));   // 2026-10-21f: no jump to the top
   return wrap;
 }
 
@@ -1697,6 +1703,233 @@ function popTools(card, items) {
   });
   card.append(row);
 }
+// ---- 2026-10-21f: steps inside a task, and the task she's on (flow).
+// "i also want to be able to quickly have split task up so i can click on it
+// and add subsections and itll just basically pop them on it. it will not be
+// 100% time based- rather, if the task is done, itll move onto the next task.
+// until that task is done, yes you can switch between tasks and that gets put
+// at where u currently are, itll extend the time of the task. i can also add
+// 'break' - esp if im watching youtube."
+function saveSteps(day, raw, list) {
+  const all = { ...((state.pages[day] && state.pages[day].steps) || {}) };
+  all[raw] = list.map((x) => ({ t: x.t, d: Boolean(x.d) }));
+  savePage(day, { steps: all });
+  drawCalendar();
+}
+function tickStep(day, raw, i) {
+  const list = stepsOf(state.pages[day], raw);
+  if (!list[i]) return;
+  list[i].d = !list[i].d;
+  if (list[i].d) cheer();
+  saveSteps(day, raw, list);
+  const st = stepsLeft(list);
+  if (list[i].d && st.all && st.done === st.all) {
+    state.calInfo = null;
+    markDone(day, raw, true);
+    state.calSaid = "Every step of “" + lineLabel(raw) + "” done, so it's ticked off.";
+    drawCalendar();
+  } else if (list[i].d && st.nextText) {
+    state.calSaid = "Next step: " + st.nextText + ".";
+    drawCalendar();
+  }
+}
+function stepsBox(day, raw) {
+  const wrap = el("div", "pop-steps");
+  const list = stepsOf(state.pages[day], raw);
+  const st = stepsLeft(list);
+  wrap.append(el("p", "pop-steps-head", list.length ? "Steps " + st.done + " of " + st.all : "Steps"));
+  list.forEach((x, i) => {
+    const row = el("div", "pop-step" + (x.d ? " done" : "") + (i === st.next ? " next" : ""));
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = x.d;
+    box.setAttribute("aria-label", x.t);
+    box.addEventListener("change", () => tickStep(day, raw, i));
+    const gone = iconButton("close", "Take this step off", () => { const l = stepsOf(state.pages[day], raw); l.splice(i, 1); saveSteps(day, raw, l); });
+    row.append(box, el("span", "pop-step-text", x.t), gone);
+    wrap.append(row);
+  });
+  const input = document.createElement("input");
+  input.className = "pop-step-input";
+  input.placeholder = list.length ? "Add a step (Enter)" : "Split it into steps: type one, press Enter (paste a list for many)";
+  input.setAttribute("aria-label", "Add a step");
+  input.maxLength = 2000;
+  input.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const words = stepsWords(input.value);
+    if (!words.length) return;
+    state.stepTyping = { day, raw };
+    saveSteps(day, raw, stepsOf(state.pages[day], raw).concat(words.map((t) => ({ t, d: false }))));
+  });
+  input.addEventListener("paste", (e) => {
+    const text = (e.clipboardData && e.clipboardData.getData("text")) || "";
+    if (!/\n/.test(text)) return;
+    e.preventDefault();
+    state.stepTyping = { day, raw };
+    saveSteps(day, raw, stepsOf(state.pages[day], raw).concat(stepsWords(text).map((t) => ({ t, d: false }))));
+  });
+  wrap.append(input);
+  if (state.stepTyping && state.stepTyping.day === day && state.stepTyping.raw === raw) {
+    requestAnimationFrame(() => { if (input.isConnected) input.focus({ preventScroll: true }); });
+  }
+  return wrap;
+}
+
+function flowOn(day, raw) { const f = state.flow; return Boolean(f && f.day === day && f.raw === raw); }
+function setFlow(f) { state.flow = f; keep("tutor-flow", f); }
+function minutesNow() { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); }
+function laptopFresh() {
+  const at = state.meta && state.meta.last_sync ? Date.parse(state.meta.last_sync) : NaN;
+  return Number.isFinite(at) && Date.now() - at < 15 * 60000;   // the laptop only stamps this when something changed
+}
+// Start a task now (or switch to it from the one she's on).
+function flowStart(day, raw) {
+  const today = isoDay(new Date());
+  if (day !== today) { state.calSaid = "Only today's tasks can be started."; drawCalendar(); return; }
+  const times = mergedTimes(allDays(state.alldays), state.timesWaiting, Date.now());
+  const now = minutesNow();
+  const own = timeParts(times[day + "|" + raw]);
+  const was = state.flow && state.flow.day === today && state.flow.raw !== raw ? state.flow.raw : "";
+  const already = own && own.start <= now + 5 && (own.end !== null ? own.end : own.start + 30) > now;
+  let n = 0;
+  if (!already || was) n = moveTimes(day, flowSwitch(times, day, was, raw, now, doneOn(day), 30), "Start “" + lineLabel(raw) + "”");
+  setFlow({ day, raw, at: Date.now(), ext: 0 });
+  nowSteer(raw);
+  const st = stepsLeft(stepsOf(state.pages[day], raw));
+  state.calInfo = null; state.calPick = null; state.flowSwitchOpen = false;
+  state.calSaid = (was ? "Switched to “" : "On it: “") + lineLabel(raw) + "”" +
+    (was ? ". “" + lineLabel(was) + "” carries on straight after it" : "") +
+    (n && !was ? ". " + n + (n === 1 ? " task" : " tasks") + " moved to make room" : "") +
+    (st.nextText ? ". First step: " + st.nextText : "") + ". If it runs over, it grows and the rest move down.";
+  drawCalendar();
+}
+// It's done: the next one comes up to now.
+function flowDone(quiet) {
+  const f = state.flow;
+  if (!f) return;
+  const times = mergedTimes(allDays(state.alldays), state.timesWaiting, Date.now());
+  const done = doneOn(f.day);
+  done.add(f.day + "|" + f.raw);
+  const { moved, next } = flowAfterDone(times, f.day, f.raw, minutesNow(), done);
+  moveTimes(f.day, moved, "");
+  setFlow(next ? { day: f.day, raw: next, at: Date.now(), ext: 0 } : null);
+  if (next) nowSteer(next);
+  if (!quiet) cheer();
+  state.calSaid = next ? "Done! Next up: “" + lineLabel(next) + "”, from now." : "Done! That was the last one with a time today.";
+  drawCalendar();
+}
+function flowStop() {
+  setFlow(null);
+  state.calSaid = "Stopped. Times stay where they are.";
+  drawCalendar();
+}
+function flowBreakGo(minutes) {
+  const f = state.flow;
+  const today = isoDay(new Date());
+  const now = minutesNow();
+  const yt = Boolean(state.flowBreakYt);
+  const fresh = laptopFresh();
+  if (fresh) {
+    // The laptop does a break properly: its timer, YouTube if she wants it,
+    // and today's tasks moved on by the break.
+    sendEdit({ kind: "chat", text: minutes + " min break" + (yt ? " youtube" : "") });
+  } else {
+    const times = mergedTimes(allDays(state.alldays), state.timesWaiting, Date.now());
+    moveTimes(today, flowBreak(times, today, f && f.day === today ? f.raw : "", now, minutes, doneOn(today)), "Break");
+  }
+  addEvent(today, yt ? "Break (YouTube)" : "Break", hhmm(now), hhmm(Math.min(24 * 60 - 1, now + minutes)), false, "#14B8A6");
+  state.calSaid = minutes + " minute break till " + clockWords(hhmm(now + minutes)) + "." +
+    (fresh ? (yt ? " The laptop opens YouTube for it and starts the timer." : " The laptop starts the timer and moves today's tasks on.")
+      : " The laptop isn't answering, so tasks moved here" + (yt ? " (YouTube can only be opened by the laptop)." : "."));
+  drawCalendar();
+}
+// Every 30 seconds: ticked somewhere else? Running over? (Only grows while the
+// laptop is answering, so nothing piles up while it's off.)
+function flowTick() {
+  const f = state.flow;
+  if (!f) return;
+  const today = isoDay(new Date());
+  if (f.day !== today) { setFlow(null); return; }
+  const found = allDays(state.alldays);
+  if (!found) return;
+  const line = ((found.days || []).find((d) => d.day === f.day) || { lines: [] }).lines.find((l) => String(l.text).trim() === f.raw);
+  if (!line) { setFlow(null); drawCalendarSoft(); return; }
+  if (line.done) { flowDone(true); return; }
+  const now = minutesNow();
+  if (f.ext && now < f.ext) return;
+  if (!laptopFresh()) return;
+  const times = mergedTimes(found, state.timesWaiting, Date.now());
+  const moved = flowExtend(times, f.day, f.raw, now, doneOn(f.day));
+  const mine = timeParts(moved[f.day + "|" + f.raw]);
+  if (!mine) return;
+  moveTimes(f.day, moved, "");
+  setFlow({ ...f, ext: mine.end });
+  state.calSaid = "“" + lineLabel(f.raw) + "” is running over, so it's on till " + clockWords(hhmm(mine.end)) + " and the rest moved down.";
+  drawCalendarSoft();
+}
+setInterval(() => { try { flowTick(); } catch (error) { /* never stops the page */ } }, 30000);
+
+function flowBar(found, now) {
+  const f = state.flow;
+  if (!f || f.day !== isoDay(now)) return null;
+  const bar = el("div", "flow-bar");
+  bar.setAttribute("role", "region");
+  bar.setAttribute("aria-label", "The task you're on");
+  const times = mergedTimes(found, state.timesWaiting, Date.now());
+  const span = timeParts(times[f.day + "|" + f.raw]);
+  const st = stepsLeft(stepsOf(state.pages[f.day], f.raw));
+  const what = el("div", "flow-what");
+  const dot = el("span", "flow-dot");
+  const colour = subjectColour(subjectFor({ text: f.raw }));
+  if (colour) dot.style.background = colour;
+  what.append(dot, el("span", "flow-label muted", "On it"), el("span", "flow-name", lineLabel(f.raw)));
+  if (st.all) what.append(el("span", "flow-step", st.nextText ? "Step " + (st.next + 1) + " of " + st.all + ": " + st.nextText : "All " + st.all + " steps done"));
+  if (span) what.append(el("span", "flow-till muted", "till " + clockWords(hhmm(span.end !== null ? span.end : span.start + 30)) + ", longer if you need"));
+  bar.append(what);
+  const acts = el("div", "flow-acts");
+  if (st.nextText) {
+    const sb = button("Step done", "quiet flow-step-go", () => tickStep(f.day, f.raw, st.next));
+    sb.prepend(icon("tick"));
+    sb.title = "Tick off “" + st.nextText + "”";
+    acts.append(sb);
+  }
+  const db = button("Done", "flow-done", () => { markDone(f.day, f.raw, true); flowDone(true); });
+  db.prepend(icon("tick"));
+  db.title = "It's done: the next task comes up to now";
+  const sw = button(state.flowSwitchOpen ? "Close" : "Switch", "quiet", () => { state.flowSwitchOpen = !state.flowSwitchOpen; drawCalendar(); });
+  sw.title = "Do something else now. This one carries on straight after it.";
+  acts.append(db, sw);
+  const br = el("div", "flow-break");
+  br.append(el("span", "muted", "Break"));
+  [5, 10, 15, 20].forEach((m) => {
+    const b = button(m + "m", "smart-chip", () => flowBreakGo(m));
+    b.title = "A " + m + " minute break from now. What's after moves down.";
+    br.append(b);
+  });
+  const yt = button("YouTube", "smart-chip" + (state.flowBreakYt ? " on" : ""), () => { state.flowBreakYt = !state.flowBreakYt; drawCalendar(); });
+  yt.setAttribute("aria-pressed", String(Boolean(state.flowBreakYt)));
+  yt.title = "The break is for YouTube (the laptop opens it for the break)";
+  br.append(yt);
+  acts.append(br);
+  const stop = iconButton("close", "Stop (times stay as they are)", flowStop);
+  acts.append(stop);
+  bar.append(acts);
+  if (state.flowSwitchOpen) {
+    const row = el("div", "flow-switch");
+    const lines = calendarCells([f.day], found, state.moves, state.exams, state.tasks, now, 0, state.swaps, locksNow(found), state.pendingDays)[0].lines
+      .filter((l) => l.kind === "line" && !l.done && !l.sub && !l.repeat && l.raw !== f.raw);
+    if (!lines.length) row.append(el("span", "muted", "Nothing else open today."));
+    lines.forEach((l) => {
+      const c = button(lineLabel(l.text), "now-chip", () => flowStart(f.day, l.raw));
+      applySubject(c, l);
+      row.append(c);
+    });
+    bar.append(row);
+  }
+  return bar;
+}
+
 function drawInfoCard(found) {
   document.querySelectorAll(".pop-card").forEach((c) => c.remove());
   const info = state.calInfo;
@@ -1734,6 +1967,21 @@ function drawInfoCard(found) {
       (sub ? " \u00b7 " + sub[1].trim().toLowerCase() : "")));
     if (/^do 1 from/i.test(raw)) card.append(el("p", "pop-line muted", "When it's time, the tutor asks which one you'll do."));
     if (locked) card.append(el("p", "pop-line muted", "Locked to this day."));
+    // 2026-10-21f: start it (or switch to it), and its steps.
+    if (day === isoDay(new Date()) && !(info.line && info.line.done)) {
+      const row = el("div", "pop-flow");
+      if (flowOn(day, raw)) {
+        row.append(el("span", "pop-flow-on", "You're on this one"), button("Done", "", () => { state.calInfo = null; markDone(day, raw, true); flowDone(true); }));
+      } else {
+        const on = state.flow && state.flow.day === day;
+        const go = button(on ? "Do this now" : "Start it", "", () => flowStart(day, raw));
+        go.title = on ? "Switch to this now; \u201c" + lineLabel(state.flow.raw) + "\u201d carries on straight after it"
+          : "Start it now. If it runs over it grows and the rest move down; when it's done the next comes up.";
+        row.append(go);
+      }
+      card.append(row);
+    }
+    card.append(stepsBox(day, raw));
     card.append(el("p", "pop-hint muted", "Drag it to move it. Or press where it goes."));
     document.body.append(card);
   }
@@ -1810,6 +2058,104 @@ function timesDrop(target, day, onHours) {
   }
 }
 
+// ---- 2026-10-21f: "i want to be able to quickly 'add a task inbetween'
+// with having little blue dashes inbetween tasks so if i put a task there,
+// itll move all tasks (that are below it) downwards".
+function insertDash(day, at) {
+  const dash = el("div", "tg-insert" + (state.calInsert && state.calInsert.day === day && state.calInsert.at === at ? " on" : ""));
+  dash.style.top = (at / 60 * HOUR_PX) + "px";
+  const plus = button("+", "tg-insert-go", (ev) => {
+    ev.stopPropagation();
+    state.calInsert = state.calInsert && state.calInsert.day === day && state.calInsert.at === at ? null : { day, at, len: (state.calInsert && state.calInsert.len) || 30 };
+    state.calInfo = null; state.calPick = null;
+    drawCalendar();
+  });
+  plus.title = "Put a task in here at " + clockWords(hhmm(at)) + " (the ones under it move down)";
+  plus.setAttribute("aria-label", plus.title);
+  dash.append(plus);
+  return dash;
+}
+function insertBox(day, at) {
+  const box = el("div", "tg-insert-box");
+  box.style.top = (at / 60 * HOUR_PX + 6) + "px";
+  ["click", "pointerdown", "mousedown"].forEach((k) => box.addEventListener(k, (ev) => ev.stopPropagation()));
+  box.draggable = false;
+  const input = document.createElement("input");
+  input.className = "tg-insert-input";
+  input.maxLength = 300;
+  input.placeholder = "New task at " + clockWords(hhmm(at));
+  input.setAttribute("aria-label", "New task at " + clockWords(hhmm(at)));
+  const lens = el("div", "tg-insert-len");
+  [15, 30, 45, 60].forEach((m) => {
+    const chip = button(m + "m", "smart-chip" + (m === state.calInsert.len ? " on" : ""), () => {
+      state.calInsert.len = m;
+      lens.querySelectorAll(".smart-chip").forEach((c) => c.classList.toggle("on", c === chip));
+      input.focus({ preventScroll: true });
+    });
+    chip.title = m + " minutes";
+    lens.append(chip);
+  });
+  const go = () => {
+    const text = typedWords(input.value.trim()).slice(0, 300);
+    if (!text) { state.calInsert = null; drawCalendar(); return; }
+    insertTask(day, at, text, state.calInsert.len || 30);
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); go(); }
+    if (e.key === "Escape") { state.calInsert = null; drawCalendar(); }
+  });
+  input.addEventListener("blur", () => setTimeout(() => {
+    if (input.isConnected && !input.value.trim() && !box.contains(document.activeElement) && state.calInsert) { state.calInsert = null; drawCalendar(); }
+  }, 250));
+  box.append(input, lens, button("Add", "tg-insert-add", go));
+  requestAnimationFrame(() => { if (input.isConnected) input.focus({ preventScroll: true }); });
+  return box;
+}
+// What's ticked on a day (so it never moves).
+function doneOn(day) {
+  const done = new Set();
+  const found = allDays(state.alldays);
+  ((found && found.days) || []).filter((d) => d.day === day)
+    .forEach((d) => d.lines.forEach((l) => { if (l.done) done.add(day + "|" + String(l.text).trim()); }));
+  return done;
+}
+// Times shown at once and sent to the laptop, one line_time each; one Ctrl+Z.
+function moveTimes(day, moved, words) {
+  const keys = Object.keys(moved || {});
+  if (!keys.length) return 0;
+  const times = mergedTimes(allDays(state.alldays), state.timesWaiting, Date.now());
+  const before = {};
+  keys.forEach((k) => { before[k] = times[k] || ""; });
+  const apply = (map) => Object.keys(map).forEach((k) => {
+    state.timesWaiting = state.timesWaiting.filter((t) => t.key !== k);
+    state.timesWaiting.push({ key: k, at: map[k], atMs: Date.now() });
+    sendEdit({ kind: "line_time", day, text: k.slice(day.length + 1), time: map[k] });
+  });
+  apply(moved);
+  if (words) remember(words, () => apply(before), () => apply(moved));
+  return keys.length;
+}
+function insertTask(day, at, text, len) {
+  const times = mergedTimes(allDays(state.alldays), state.timesWaiting, Date.now());
+  const moved = insertGap(times, day, at, len, doneOn(day));
+  delete moved[day + "|" + text];
+  const span = timeSpan(at, at + len);
+  state.timesWaiting = state.timesWaiting.filter((t) => t.key !== day + "|" + text);
+  state.timesWaiting.push({ key: day + "|" + text, at: span, atMs: Date.now() });
+  putBack(day, text, span);
+  const n = moveTimes(day, moved, "");
+  const before = {};
+  Object.keys(moved).forEach((k) => { before[k] = times[k]; });
+  remember("Put \u201c" + text + "\u201d in between", () => {
+    deleteLine(day, text);
+    moveTimes(day, before, "");
+  }, () => insertTask(day, at, text, len));
+  state.calInsert = null;
+  state.calSaid = "\u201c" + text + "\u201d is in at " + clockWords(hhmm(at)) + " for " + len + " minutes" +
+    (n ? ". " + n + (n === 1 ? " task" : " tasks") + " under it moved down" : "") + ". Ctrl+Z takes it out.";
+  drawCalendar();
+}
+
 // 2026-10-19: "cant extend amount of time a task holds by drag". A task's
 // bottom edge pulls longer or shorter, in quarter hours, like an event's.
 function taskPull(block, item, day) {
@@ -1880,6 +2226,11 @@ function timedBlock(item, day, past) {
   const when = clockWords(hhmm(item.start)) + (isEvent && item.event.end ? " to " + clockWords(item.event.end)
     : !isEvent ? " to " + clockWords(hhmm(item.end)) : "");   // 2026-10-19d: start and end
   block.append(el("span", "tg-item-name", isEvent ? item.label : lineLabel(item.label)), el("span", "tg-item-time", when));
+  if (!isEvent && item.line) {                     // 2026-10-21f: its steps, and the one she's on
+    const st = stepsLeft(stepsOf(state.pages[day], item.line.raw));
+    if (st.all) block.append(el("span", "tg-item-steps", st.done + "/" + st.all + (st.nextText ? " \u00b7 " + st.nextText : " \u00b7 all done")));
+    if (flowOn(day, item.line.raw)) block.classList.add("flow-on");
+  }
   if (item.lanes > 1) block.classList.add("narrow");        // 2026-10-19: the name first
   // 2026-10-19e: the icons came off the task; a click opens its card.
   if (!isEvent) {
@@ -1990,6 +2341,15 @@ function drawTimes(box, days, found, now, pick) {
     const col = el("div", "tg-col" + (cell.past ? " past" : "") + (cell.today ? " today" : ""));
     col.dataset.day = cell.day;            // 2026-10-17b: an event dragged across
     timed.forEach((item) => col.append(timedBlock(item, cell.day, cell.past)));
+    // 2026-10-21f: the blue dashes between tasks: press one to put a task there.
+    if (!cell.past) {
+      const nowMin = cell.today ? now.getHours() * 60 + now.getMinutes() : -1;
+      insertMarks(timed.filter((i) => i.kind !== "event" && i.line)).forEach((m) => {
+        if (m < nowMin - 30) return;              // long gone today
+        col.append(insertDash(cell.day, m));
+      });
+      if (state.calInsert && state.calInsert.day === cell.day) col.append(insertBox(cell.day, state.calInsert.at));
+    }
     if (cell.today) {
       const line = el("div", "tg-now");
       line.style.top = ((now.getHours() * 60 + now.getMinutes()) / 60 * HOUR_PX) + "px";
@@ -2073,7 +2433,54 @@ function ghostPick(day, raw) {
   return state.picksWaiting.some((p) => p.to === day && p.text === raw);
 }
 
-function drawBank(box, found, pick) {
+// 2026-10-21f: the calendar and the bank side by side (bank left or right),
+// with a grip between them to pull the bank wider or narrower.
+function dockBank(box, main, where, found, pick) {
+  if (where === "bottom") { box.append(main); return; }
+  const dock = el("div", "cal-dock dock-" + where);
+  const side = el("aside", "cal-side");
+  const hidden = Boolean(recall("tutor-bank-hidden", false));
+  const width = bankWidth(state.bankW, window.innerWidth);
+  if (hidden) side.classList.add("shut");
+  else side.style.width = width + "px";
+  drawBank(side, found, pick, where);
+  const grip = el("div", "bank-grip");
+  grip.title = "Pull to make the task bank wider or narrower (double click: back to normal)";
+  grip.setAttribute("role", "separator");
+  grip.setAttribute("aria-orientation", "vertical");
+  grip.addEventListener("dblclick", () => { state.bankW = 340; keep("tutor-bank-width", 340); drawCalendar(); });
+  grip.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || hidden) return;
+    event.preventDefault();
+    const x0 = event.clientX;
+    const w0 = side.getBoundingClientRect().width;
+    grip.setPointerCapture(event.pointerId);
+    grip.classList.add("pulling");
+    state.dragging = true;              // no redraw under her hand
+    const move = (ev) => {
+      const dx = ev.clientX - x0;
+      side.style.width = bankWidth(where === "right" ? w0 - dx : w0 + dx, window.innerWidth) + "px";
+    };
+    const up = () => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", up);
+      grip.removeEventListener("pointercancel", up);
+      grip.classList.remove("pulling");
+      state.dragging = false;
+      state.bankW = bankWidth(parseFloat(side.style.width), window.innerWidth);
+      keep("tutor-bank-width", state.bankW);
+      if (state.calStale) { state.calStale = false; drawCalendar(); }
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up);
+    grip.addEventListener("pointercancel", up);
+  });
+  if (hidden) grip.classList.add("off");
+  if (where === "left") dock.append(side, grip, main); else dock.append(main, grip, side);
+  box.append(dock);
+}
+
+function drawBank(box, found, pick, where) {
   // 2026-10-15c: "drag the tasks to a box OUTSIDE ... a tasks bank".
   // 2026-10-17: "this is flippin terrible?? ... what i meant were
   // collapsible layers ... like u can view 3 at a time and click to
@@ -2089,6 +2496,16 @@ function drawBank(box, found, pick) {
   const bankFold = button(bankHidden ? "Show" : "Hide", "plan-check-fold", () => { keep("tutor-bank-hidden", !bankHidden); drawCalendar(); });
   bankFold.title = bankHidden ? "Show the task bank" : "Hide the task bank";
   bankTop.append(el("p", "plan-head", "Task bank"), bankFold);
+  // 2026-10-21f: where it sits. Not on a phone (it's always at the bottom there).
+  if (window.innerWidth >= 820) {
+    const place = chipRow("ring-switch bank-place", "Where the task bank sits", BANK_DOCKS, where || "bottom", (value) => {
+      state.bankDock = value; keep("tutor-bank-dock", value);
+      if (bankHidden) keep("tutor-bank-hidden", false);
+      state.bankScroll = 0; drawCalendar();
+    });
+    place.title = "Put the task bank on the left, at the bottom or on the right";
+    bankTop.append(place);
+  }
   bankBox.append(bankTop);
   if (bankHidden) { bankBox.classList.add("bank-hidden"); box.append(bankBox); return; }
   const tabs = bankTabs(withMoves(found, state.moves).get(BANK) || []);
@@ -2150,6 +2567,11 @@ function drawBank(box, found, pick) {
   });
   if (tabs.length) grid.prepend(generalPick(tabs));       // 2026-10-19c
   if (tabs.length) bankBox.append(grid);
+  // 2026-10-21f: "if i add a new task, it will not reset my position on how
+  // far ive scrolled on it". Every redraw puts the bank back where she was.
+  grid.addEventListener("scroll", () => { if (grid.isConnected) state.bankScroll = grid.scrollTop; }, { passive: true });   // a grid just taken off reads 0
+  const back = state.bankScroll || 0;
+  if (back) requestAnimationFrame(() => { if (grid.isConnected) grid.scrollTop = back; });
   calDrop(bankBox, BANK, pick);
   box.append(bankBox);
 }
@@ -2271,6 +2693,11 @@ function calLine(line, dayId, past, pick) {
     else if (item.lastChild && item.lastChild.nodeType === 3) item.lastChild.textContent = lineLabel(line.text);
     if (can && dayId !== BANK) { item.dataset.day = dayId; item.dataset.raw = line.raw; }
 
+  }
+  if (!head && !line.sub && dayId !== BANK) {   // 2026-10-21f: its steps
+    const st = stepsLeft(stepsOf(state.pages[dayId], line.raw));
+    if (st.all) item.append(el("span", "line-steps", " " + st.done + "/" + st.all));
+    if (flowOn(dayId, line.raw)) item.classList.add("flow-on");
   }
   if (line.repeat) item.title = "Comes back every day. It lands on this day's list on the day.";
   if (!can) return item;
@@ -2625,6 +3052,7 @@ function locksNow(found) {
 // 2026-10-19c: tick a task off (or back on) from the calendar, the same way
 // the Tasks page does.
 function markDone(day, text, done, quiet) {
+  if (done && flowOn(day, text) && !quiet) setTimeout(() => { if (state.flow && flowOn(day, text)) flowDone(true); }, 0);   // 2026-10-21f
   if (!quiet) remember((done ? "Tick " : "Untick ") + "\u201c" + text + "\u201d",
     () => markDone(day, text, !done, true), () => markDone(day, text, done, true));
   tickDay({ day, raw: text, done: !done });
@@ -2928,7 +3356,7 @@ function iconButton(name, tip, onClick, pressed) {
 // comes while she's typing in the calendar waits until she's done.
 function typingInCalendar() {
   const active = document.activeElement;
-  return Boolean(active && $("tab-calendar").contains(active) &&
+  return Boolean(active && ($("tab-calendar").contains(active) || (active.closest && active.closest(".pop-card"))) &&
     /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName));
 }
 
@@ -2943,7 +3371,16 @@ document.addEventListener("focusout", () => {
   }, 300);
 });
 
+// 2026-10-21f: "if i add a new task, it will not reset my position on how far
+// ive scrolled". A redraw keeps the page where it was (the bank keeps its own
+// scroll, see drawBank).
 function drawCalendar() {
+  if (state.dragging) { state.calStale = true; return; }
+  const y = window.scrollY;
+  drawCalendarNow();
+  if (window.scrollY !== y && !$("tab-calendar").hidden) window.scrollTo(window.scrollX, y);
+}
+function drawCalendarNow() {
   // Never redrawn in the middle of a drag: the line she's holding would go.
   if (state.dragging) { state.calStale = true; return; }
   const box = $("tab-calendar");
@@ -3104,12 +3541,19 @@ function drawCalendar() {
   if (state.calMulti.length) box.append(multiBar());                      // 2026-10-18c
   if (state.calEventPick) box.append(eventEditor(state.calEventPick));   // 2026-10-17b
   // 2026-10-19d: "Take its time off" is the clock icon on the task now.
+  // 2026-10-21f: the task she's on (flow) has its own bar at the top.
+  try { const fb = flowBar(found, now); if (fb) box.append(fb); } catch (error) { /* never stops the calendar */ }
+  // 2026-10-21f: the bank can sit at the right (the start), the left or the
+  // bottom, as wide as she pulls it.
+  const where = bankWhere(state.bankDock, window.innerWidth);
+  const main = el("div", "cal-main");
   if (state.calLayout === "times" && state.calView !== "month") {
-    drawTimes(box, days, found, now, pick);
-    drawBank(box, found, pick);
-    drawPlanCheck(box, found);             // 2026-10-18
-    box.append(el("p", "muted", "Drag a task onto an hour to give it a rough time, or to the top to take it off. " +
-      "Meals and prayers stay on Today. Days that have gone can't be changed."));
+    drawTimes(main, days, found, now, pick);
+    if (where === "bottom") drawBank(main, found, pick, where);
+    drawPlanCheck(main, found);             // 2026-10-18
+    main.append(el("p", "muted", "Drag a task onto an hour to give it a rough time, or to the top to take it off. " +
+      "The blue dashes put a new task between two (the ones under it move down). Days that have gone can't be changed."));
+    dockBank(box, main, where, found, pick);
     try { drawInfoCard(found); } catch (error) { /* never stops the calendar */ }   // 2026-10-19e
     return;
   }
@@ -3142,10 +3586,11 @@ function drawCalendar() {
     if (!cell.past) calDrop(day, cell.day, pick);
     grid.append(day);
   });
-  box.append(grid);
-  drawBank(box, found, pick);
-  drawPlanCheck(box, found);               // 2026-10-18
-  box.append(el("p", "muted", "Only the day changes, never the words. Meals and prayers stay on Today. Days that have gone can't be changed."));
+  main.append(grid);
+  if (where === "bottom") drawBank(main, found, pick, where);
+  drawPlanCheck(main, found);               // 2026-10-18
+  main.append(el("p", "muted", "Only the day changes, never the words. Meals and prayers stay on Today. Days that have gone can't be changed."));
+  dockBank(box, main, where, found, pick);
   try { drawInfoCard(allDays(state.alldays)); } catch (error) { /* never stops the calendar */ }   // 2026-10-19e
 }
 
