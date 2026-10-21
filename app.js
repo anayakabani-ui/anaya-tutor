@@ -43,7 +43,7 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          DOING_MINUTES, DOING_AGAIN_MIN, doingOf, doingLeft, doingUntil,
          PAGE_PRAYERS, PAGE_MEALS, dayExtras, parseClock12, schoolSummary,   // 2026-10-21
          NOW_PRIOS, nowColumns, nowPickPrio, nowPrioOf,
-         guessSubjectLoose, linkParts } from "./logic.js";   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
+         guessSubjectLoose, linkParts, pageGroups } from "./logic.js";   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
 
 const $ = (id) => document.getElementById(id);
 // 2026-10-18b: a line's subject, by its words, from the bank's subject lists.
@@ -636,11 +636,24 @@ function saveTreats(patch) {
   state.pages.treats = now;
   if (cloud) setDoc(doc(cloud.db, cloud.base + "pages/treats"), { ...patch, at: isoNow(new Date()) }, { merge: true }).catch(() => {});
 }
+// 2026-10-21c: "if i finish ANYTHING there shoud be the confetti and
+// yayayay". Every finish anywhere on the site: a burst from where she
+// pressed and a word that floats up.
+const CHEERS = ["Yay!", "Yayayay!", "Done!", "Nice one!", "Woo!", "Yesss!", "Look at you go!", "Get in!", "Smashed it!"];
+function cheer() {
+  const x = pointerAt.x >= 0 ? pointerAt.x : window.innerWidth / 2;
+  const y = pointerAt.y >= 0 ? pointerAt.y : window.innerHeight / 2;
+  confetti(90, x, y, 2.4);
+  const word = el("div", "cheer", CHEERS[Math.floor(Math.random() * CHEERS.length)]);
+  word.style.left = Math.max(10, Math.min(window.innerWidth - 160, x - 40)) + "px";
+  word.style.top = Math.max(10, y - 30) + "px";
+  word.setAttribute("aria-hidden", "true");
+  document.body.append(word);
+  setTimeout(() => word.remove(), 1400);
+}
 function celebrateTick(raw) {
   // A small burst for every tick, from where she pressed if we know it.
-  const x = pointerAt.x >= 0 ? pointerAt.x : undefined;
-  const y = pointerAt.y >= 0 ? pointerAt.y : undefined;
-  confetti(90, x, y, 2.4);
+  cheer();
   const today = isoDay(new Date());
   const t = treatsData();
   const got = Array.isArray(t.got[today]) ? t.got[today] : [];
@@ -887,6 +900,7 @@ function pageBasicsCard(day) {
   const doneCount = names.filter((n) => timeOf(n)).length;
   if (folded) { card.append(el("p", "muted", doneCount + " of " + names.length + " logged")); return card; }
   const log = (n, at) => {
+    if (at && !timeOf(n)) cheer();           // 2026-10-21c: a prayer or meal done is a finish too
     savePage(day, { basics: { ...mine, [n]: at } });
     sendEdit({ kind: "basic_log", day, name: n, time: at }).catch(() => {});
     page.basicEdit = null;
@@ -4322,6 +4336,7 @@ function pageStarCard(day, lines, data) {
     const row = el("div", "page-star-row" + (done ? " done" : ""));
     const tick = button("", "box" + (done ? " ticked" : ""), () => {
       if (line) markDone(day, line.raw, !line.done, true);
+      if (!done) cheer();                    // 2026-10-21c: confetti and yay on a North Star too
       save(stars.map((o, j) => (j === i ? { text: o.text, done: !done } : o)));
     });
     tick.setAttribute("aria-label", (done ? "Untick " : "Tick ") + s.text);
@@ -4394,7 +4409,7 @@ function pageTrackCard(day, data) {
   const list = el("div", "page-habits");
   habits.forEach((h) => {
     const on = Boolean(data.habits[h]);
-    const item = button("", "page-habit" + (on ? " on" : ""), () => savePage(day, { habits: { ...data.habits, [h]: !on } }));
+    const item = button("", "page-habit" + (on ? " on" : ""), () => { if (!on) cheer(); savePage(day, { habits: { ...data.habits, [h]: !on } }); });   // 2026-10-21c: yay
     item.append(el("span", "box" + (on ? " ticked" : "")), el("span", "", h));
     item.setAttribute("aria-pressed", String(on));
     list.append(item);
@@ -4552,15 +4567,30 @@ function pageBlocksCard(day, lines, times, events) {
 }
 
 function pageTaskList(day, lines, times) {
-  const card = el("div", "page-card page-tasks");
-  card.append(el("span", "page-label", "Tasks"));
+  // 2026-10-21c: "maybe this could be collapseable? and also id like it to
+  // show the mini lists". Hide folds the card (kept on this device); a
+  // heading with lines under it is one mini list, folded until she opens it.
+  const folded = Boolean(recall("tutor-pagetasks-folded", false));
+  const card = el("div", "page-card page-tasks" + (folded ? " folded" : ""));
+  const head = el("div", "now-head");
+  head.append(el("span", "page-label", "Tasks"),
+    button(folded ? "Show" : "Hide", "plan-check-fold tasks-fold", () => { keep("tutor-pagetasks-folded", !folded); drawPage(); }));
+  card.append(head);
+  const found = allDays(state.alldays);
+  const d = found && found.days.find((x) => x.day === day);
+  const raw = d ? dayLines(d.lines, day, state.pendingDays) : [];
+  const groups = pageGroups(raw);
+  const known = new Set(raw.filter((l) => l.kind === "line").map((l) => l.raw));
+  const loose = groups.loose.concat(lines.filter((l) => l.kind === "line" && !l.repeat && !known.has(l.raw)))
+    .filter((l) => !deleting(day, l.raw));
+  const openCount = loose.filter((l) => !l.done).length + groups.groups.reduce((n, g) => n + g.items.filter((l) => !l.done).length, 0);
+  if (folded) { card.append(el("p", "muted", openCount + " open" + (groups.groups.length ? ", " + groups.groups.length + " mini " + (groups.groups.length === 1 ? "list" : "lists") : ""))); return card; }
   const list = el("div", "page-task-list");
-  const shown = lines.filter((l) => l.kind === "line" && !l.repeat);
-  if (!shown.length) list.append(el("p", "muted", "Nothing here yet. Brain dump everything below."));
-  shown.slice().sort((a, b) => Number(a.done) - Number(b.done)).forEach((line) => {
+  if (!loose.length && !groups.groups.length) list.append(el("p", "muted", "Nothing here yet. Brain dump everything below."));
+  const row = (line, inGroup) => {
     const at = times[day + "|" + line.raw];
     const held = page.held && page.held.raw === line.raw;
-    const item = el("div", "page-task" + (line.done ? " done" : "") + (held ? " held" : "") + (line.sub ? " sub" : ""));
+    const item = el("div", "page-task" + (line.done ? " done" : "") + (held ? " held" : "") + (line.sub || inGroup ? " sub" : ""));
     applySubject(item, line);
     item.draggable = !line.done;
     item.addEventListener("dragstart", (event) => {
@@ -4572,10 +4602,26 @@ function pageTaskList(day, lines, times) {
     const name = button(lineLabel(line.text), "page-task-name", () => { if (!line.done) pageHold(line); });
     item.append(tick, name);
     const p = timeParts(at);
-    item.append(el("span", "page-task-when", p ? clockWords(hhmm(p.start)) : line.done ? "" : "no time"));
+    item.append(el("span", "page-task-when", p ? clockWords(hhmm(p.start)) : line.done || inGroup ? "" : "no time"));
     if ((pageOf(day).stars || []).some((s) => s.text === line.raw)) item.append(el("span", "page-star-icon small", "★"));
-    list.append(item);
+    return item;
+  };
+  const opened = recall("tutor-minilists-open", {});
+  const doneLoose = loose.filter((l) => l.done);
+  loose.filter((l) => !l.done).forEach((line) => list.append(row(line, false)));
+  groups.groups.forEach((g) => {
+    const key = day + "|" + g.raw;
+    const isOpen = Boolean(opened[key]);
+    const got = g.items.filter((l) => l.done).length;
+    const box = el("div", "mini-list" + (isOpen ? " open" : "") + (got === g.items.length ? " all-done" : ""));
+    const top = button("", "mini-list-head", () => { keep("tutor-minilists-open", { ...recall("tutor-minilists-open", {}), [key]: !isOpen }); drawPage(); });
+    top.setAttribute("aria-expanded", String(isOpen));
+    top.append(el("span", "mini-arrow", isOpen ? "▾" : "▸"), el("span", "mini-name", g.head), el("span", "mini-count", got + " of " + g.items.length));
+    box.append(top);
+    if (isOpen) g.items.forEach((line) => box.append(row(line, true)));
+    list.append(box);
   });
+  doneLoose.forEach((line) => list.append(row(line, false)));
   card.append(list);
   const form = el("form", "page-inline");
   const field = el("input");
