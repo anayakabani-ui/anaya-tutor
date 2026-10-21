@@ -1540,7 +1540,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v79";   // 2026-10-21d: was v78 (21c: was v77)
+export const APP_VERSION = "v80";   // 2026-10-21f: was v79 (21d: was v78, 21c: was v77)
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -2853,4 +2853,161 @@ export function pageGroups(lines) {
     if (open) open.items.push(l); else loose.push(l);
   });
   return { loose, groups: groups.filter((g) => g.items.length) };
+}
+
+// ---- 2026-10-21f: the calendar's big update. "i want the task bank to be
+// moved to the right hand side; i can hide it, move it back to the bottom,
+// move it to the right again or even to the left hand side, and i can adjust
+// the width of it."
+export const BANK_DOCKS = [["left", "Left"], ["bottom", "Bottom"], ["right", "Right"]];
+export const BANK_WIDTH = { least: 220, most: 640, start: 340 };
+export function bankWhere(saved, screenWidth) {
+  const w = Number(screenWidth) || 0;
+  if (w && w < 820) return "bottom";           // a phone: no room at the side
+  return BANK_DOCKS.some(([v]) => v === saved) ? saved : "right";
+}
+export function bankWidth(saved, screenWidth) {
+  const most = Math.max(BANK_WIDTH.least, Math.min(BANK_WIDTH.most, Math.round((Number(screenWidth) || 1280) * 0.5)));
+  const n = Math.round(Number(saved) || BANK_WIDTH.start);
+  return Math.max(BANK_WIDTH.least, Math.min(most, n));
+}
+
+// "i want to be able to quickly have split task up so i can click on it and
+// add subsections and itll just basically pop them on it." Steps live with
+// the day's page (pages/<day> {steps: {line: [{t, d}]}}), on the website.
+export function stepsOf(pageRaw, raw) {
+  const all = pageRaw && typeof pageRaw === "object" && pageRaw.steps && typeof pageRaw.steps === "object" ? pageRaw.steps : {};
+  const list = Array.isArray(all[raw]) ? all[raw] : [];
+  return list.map((s) => ({ t: String((s && s.t) || "").trim().slice(0, 160), d: Boolean(s && s.d) })).filter((s) => s.t).slice(0, 30);
+}
+// What she typed (or pasted) as steps: one a line, or split on ";".
+export function stepsWords(text) {
+  return String(text || "").split(/\r?\n|;/).map((s) => s.replace(/^\s*(?:[-*•>]|\d+[.)])\s*/, "").trim())
+    .filter(Boolean).map((s) => s.slice(0, 160)).slice(0, 30);
+}
+export function stepsLeft(steps) {
+  const list = steps || [];
+  const next = list.findIndex((s) => !s.d);
+  return { done: list.filter((s) => s.d).length, all: list.length, next, nextText: next >= 0 ? list[next].t : "" };
+}
+
+// The day's open tasks with a time, earliest first.
+export function flowTasks(times, day, done) {
+  const out = [];
+  Object.keys(times || {}).forEach((key) => {
+    if (!key.startsWith(day + "|") || (done && done.has(key))) return;
+    const p = timeParts(times[key]);
+    if (!p) return;
+    out.push({ key, text: key.slice(day.length + 1), start: p.start, end: p.end !== null ? p.end : p.start + 30 });
+  });
+  return out.sort((x, y) => x.start - y.start || x.end - y.end || (x.text < y.text ? -1 : 1));
+}
+// Push down whatever is in the way from `cursor` on (only as far as needed:
+// a gap takes up the push, so things after a gap stay put).
+function pushDownFrom(list, from, cursor, skip, out) {
+  let c = cursor;
+  for (const t of list) {
+    if (skip.has(t.key) || t.start < from) continue;
+    if (t.start >= c) break;
+    const len = t.end - t.start;
+    const s = Math.min(23 * 60 + 45, c);
+    out[t.key] = timeSpan(s, s + len);
+    c = s + len;
+  }
+  return out;
+}
+// "little blue dashes inbetween tasks so if i put a task there, itll move all
+// tasks (that are below it) downwards". A new task at `at` for `length`
+// minutes: what has to move down for it.
+export function insertGap(times, day, at, length, done) {
+  const list = flowTasks(times, day, done);
+  return pushDownFrom(list, at, at + Math.max(5, Number(length) || 30), new Set(), {});
+}
+// Where the dashes go on a day: above the first task and under each one.
+export function insertMarks(items) {
+  const list = (items || []).filter((i) => Number.isFinite(i.start) && Number.isFinite(i.end)).sort((x, y) => x.start - y.start);
+  if (!list.length) return [];
+  const spots = [list[0].start].concat(list.map((i) => i.end));
+  const out = [];
+  spots.sort((x, y) => x - y).forEach((m) => { if (m <= 24 * 60 - 15 && !out.some((o) => Math.abs(o - m) < 10)) out.push(m); });
+  return out;
+}
+export const roundDown5 = (m) => Math.floor(m / 5) * 5;
+export const roundUp5 = (m) => Math.ceil(m / 5) * 5;
+
+// "it will not be 100% time based- rather, if the task is done, itll move
+// onto the next task. until that task is done ... itll extend the time of the
+// task." A task she's on that runs past its end grows (5 minutes at a time),
+// and what's after it moves down.
+export function flowExtend(times, day, text, nowMin, done) {
+  const list = flowTasks(times, day, done);
+  const me = list.find((t) => t.text === text);
+  if (!me || nowMin < me.end) return {};
+  const end = Math.min(24 * 60 - 1, roundUp5(nowMin) + 5);
+  if (end <= me.end) return {};
+  const out = { [me.key]: timeSpan(me.start, end) };
+  return pushDownFrom(list, me.start, end, new Set([me.key]), out);
+}
+// Done: the next task comes up to now, and the ones joined on behind it come
+// with it (earlier or later). Something after a gap stays where it is.
+export function flowAfterDone(times, day, text, nowMin, done) {
+  const list = flowTasks(times, day, done).filter((t) => t.text !== text);
+  const all = flowTasks(times, day, null);
+  const me = all.find((t) => t.text === text);
+  const from = me ? me.start : nowMin;
+  const start = roundDown5(nowMin);
+  const out = {};
+  if (me && start < me.end && start > me.start) out[me.key] = timeSpan(me.start, Math.max(me.start + 15, start));
+  const next = list.find((t) => t.start >= from && t.key !== (me && me.key)) || list.find((t) => t.end > nowMin);
+  if (!next) return { moved: out, next: "" };
+  const delta = start - next.start;
+  if (delta === 0) return { moved: out, next: next.text };
+  if (delta > 0) {
+    out[next.key] = timeSpan(start, start + (next.end - next.start));
+    pushDownFrom(list, next.start, start + (next.end - next.start), new Set([next.key]), out);
+    return { moved: out, next: next.text };
+  }
+  // Earlier: the run of tasks joined on behind it comes up too.
+  let prevEnd = next.end;
+  out[next.key] = timeSpan(next.start + delta, next.end + delta);
+  for (const t of list) {
+    if (t.key === next.key || t.start < next.start) continue;
+    if (t.start > prevEnd) break;
+    out[t.key] = timeSpan(t.start + delta, t.end + delta);
+    prevEnd = Math.max(prevEnd, t.end);
+  }
+  return { moved: out, next: next.text };
+}
+// "you can switch between tasks and that gets put at where u currently are".
+// The one she switches to goes at now; the one she was on (not done) carries
+// on straight after it with the time it had left; the rest move down.
+export function flowSwitch(times, day, cur, to, nowMin, done, toLength) {
+  const all = flowTasks(times, day, done);
+  const start = roundDown5(nowMin);
+  const target = all.find((t) => t.text === to);
+  const len = target ? target.end - target.start : Math.max(15, Number(toLength) || 30);
+  const out = {};
+  out[day + "|" + to] = timeSpan(start, start + len);
+  let cursor = start + len;
+  const skip = new Set([day + "|" + to]);
+  const mine = cur && cur !== to ? all.find((t) => t.text === cur) : null;
+  if (mine) {
+    const left = Math.max(15, mine.end - Math.max(mine.start, start));
+    out[mine.key] = timeSpan(cursor, cursor + left);
+    cursor += left;
+    skip.add(mine.key);
+  }
+  return pushDownFrom(all, start, cursor, skip, out);
+}
+// A break from now: the task she's on gets that much longer, everything
+// after now moves down by it.
+export function flowBreak(times, day, cur, nowMin, minutes, done) {
+  const all = flowTasks(times, day, done);
+  const out = {};
+  const n = Math.max(1, Number(minutes) || 0);
+  all.forEach((t) => {
+    if (t.text === cur && t.start <= nowMin && t.end > nowMin) out[t.key] = timeSpan(t.start, t.end + n);
+    else if (t.start >= nowMin) out[t.key] = timeSpan(t.start + n, t.end + n);
+  });
+  return out;
 }
