@@ -39,7 +39,9 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          pageData, pageHabits, pageSlots, pageGaps, longerBy, pageSteps, carryList, PAGE_MOST_HABITS, PAGE_HABIT_IDEAS, PAGE_MOST_STARS, pageDoneBySlot,
          smartItems, smartPlan, smartDefaults, smartLeftovers, smartReadWords, smartLevelOf, smartSubjectKey, SMART_LEVELS,
          NOW_BLOCKS, nowBlocks, nowPick, nowRollover, nowBlockOf,
-         treatRules, treatsForDay, treatsEarned, treatProgress,
+         treatRules, treatsForDay, treatsEarned, treatProgress, treatWords,
+         DOING_MINUTES, DOING_AGAIN_MIN, doingOf, doingLeft, doingUntil,
+         PAGE_PRAYERS, PAGE_MEALS, dayExtras, parseClock12, schoolSummary,   // 2026-10-21
          NOW_PRIOS, nowColumns, nowPickPrio, nowPrioOf,
          guessSubjectLoose, linkParts } from "./logic.js";   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
 
@@ -642,13 +644,39 @@ function celebrateTick(raw) {
   const today = isoDay(new Date());
   const t = treatsData();
   const got = Array.isArray(t.got[today]) ? t.got[today] : [];
-  const earned = treatsEarned(t.rules, doneTodayTexts(), got, today);   // 2026-10-20k: only today's rules
+  const earned = treatsEarned(t.rules, doneTodayTexts(), got, today, treatCtx(today));   // 2026-10-20k: only today's rules; 2026-10-21: sets
   if (!earned.length) return;
   saveTreats({ got: { ...t.got, [today]: got.concat(earned.map((r) => r.id)) } });
   const r = earned[0];
-  setTimeout(() => bigCelebration(r.reward + "!", r.kind === "count"
-    ? r.n + " " + (r.n === 1 ? "task" : "tasks") + " done today. Go get your " + r.reward + "."
-    : "“" + lineLabel(r.task) + "” is done. Go get your " + r.reward + "."), 300);
+  setTimeout(() => bigCelebration(r.reward + "!", treatEarnedWords(r)), 300);
+}
+// 2026-10-21: what each kind of treat says when it's earned.
+function treatEarnedWords(r) {
+  if (r.kind === "count") return r.n + " " + (r.n === 1 ? "task" : "tasks") + " done today. Go get your " + r.reward + ".";
+  if (r.kind === "set") return (r.tasks.length ? "The whole set is done." : "All your " + r.subject + " is done.") + " Go get your " + r.reward + ".";
+  return "“" + lineLabel(r.task) + "” is done. Go get your " + r.reward + ".";
+}
+// 2026-10-21: a set made of a subject needs each line's subject.
+function treatCtx(day) {
+  return { lines: pageLines(day).filter((l) => l.kind === "line" && !String(l.raw).startsWith(">"))
+    .map((l) => ({ raw: l.raw, done: Boolean(l.done), subject: subjectFor({ text: l.raw }) })) };
+}
+// 2026-10-21: a tick that came from the laptop (its "did you finish X?" card,
+// or a tick there) earns a treat too. Only when something new got ticked, so
+// opening the site or adding a rule doesn't set it off.
+let treatDoneSeen = null;
+function treatsFromLaptop() {
+  const today = isoDay(new Date());
+  const done = doneTodayTexts();
+  const before = treatDoneSeen;
+  treatDoneSeen = { day: today, done: new Set(done) };
+  if (!before || before.day !== today || !done.some((x) => !before.done.has(x))) return;
+  const t = treatsData();
+  const got = Array.isArray(t.got[today]) ? t.got[today] : [];
+  const earned = treatsEarned(t.rules, done, got, today, treatCtx(today));
+  if (!earned.length) return;
+  saveTreats({ got: { ...t.got, [today]: got.concat(earned.map((r) => r.id)) } });
+  setTimeout(() => bigCelebration(earned[0].reward + "!", treatEarnedWords(earned[0])), 300);
 }
 
 // The treats card on the Day page: her rules, how far she's got, add one.
@@ -657,6 +685,7 @@ function pageTreatsCard(day) {
   const t = treatsData();
   const done = day === today ? doneTodayTexts() : [];
   const got = Array.isArray(t.got[today]) ? t.got[today] : [];
+  const ctx = treatCtx(day);
   const card = el("div", "page-card page-treats");
   card.append(el("span", "page-label", "Treats"));
   if (!t.rules.length) card.append(el("p", "muted", "Give yourself something to work for. Like: after 3 tasks, a Zbar."));
@@ -666,28 +695,71 @@ function pageTreatsCard(day) {
   if (t.rules.length && !shown.length) card.append(el("p", "muted", "No treats set for this day yet."));
   shown.forEach((r) => {
     const row = el("div", "treat-row" + (got.includes(r.id) ? " got" : ""));
-    row.append(el("span", "treat-words", (r.kind === "count" ? "After " + r.n + " " + (r.n === 1 ? "task" : "tasks") : "When “" + lineLabel(r.task) + "” is done") + ": " + r.reward),
-               el("span", "treat-progress", got.includes(r.id) ? "Earned today" : day === today ? treatProgress(r, done) : ""),
-               button("Remove", "quiet smart-skip", () => saveTreats({ rules: t.rules.filter((x) => x.id !== r.id) }) || drawPage()));
+    row.append(el("span", "treat-words", treatWords(r, lineLabel) + ": " + r.reward),   // 2026-10-21: four kinds
+               el("span", "treat-progress", got.includes(r.id) ? "Earned today" : day === today ? treatProgress(r, done, ctx) : ""));
+    // 2026-10-21: a "while doing" treat starts its timer from here or the Now card.
+    if (r.kind === "timer" && day === today && !got.includes(r.id) && !done.map((x) => x.toLowerCase()).includes(r.task.toLowerCase()))
+      row.append(button("Start timer", "quiet treat-start", () => startDoing(day, r.task, r.minutes)));
+    row.append(button("Remove", "quiet smart-skip", () => saveTreats({ rules: t.rules.filter((x) => x.id !== r.id) }) || drawPage()));
     card.append(row);
   });
   const add = el("div", "treat-add");
   const kind = page.treatKind || "count";
-  add.append(smartChips("Treat for", [["count", "A number of tasks"], ["task", "One task"]], kind, (v) => { page.treatKind = v; drawPage(); }));
+  // 2026-10-21: "after I finish this set" and "while doing X".
+  add.append(smartChips("Treat for", [["count", "A number of tasks"], ["task", "One task"], ["set", "A set"], ["timer", "While doing X"]], kind, (v) => { page.treatKind = v; drawPage(); }));
   const row = el("div", "page-inline");
+  const open = pageLines(day).filter((l) => l.kind === "line" && !l.done && !String(l.raw).startsWith(">"));   // 2026-10-20k: was pageLines(today)
+  const taskSelect = () => {
+    const sel = document.createElement("select");
+    sel.setAttribute("aria-label", "Which task");
+    open.forEach((l) => { const o = document.createElement("option"); o.value = l.raw; o.textContent = lineLabel(l.raw); sel.append(o); });
+    return sel;
+  };
   let what = null;
+  let mins = null;
+  let setBox = null;
   if (kind === "count") {
     what = document.createElement("input");
     what.type = "number"; what.min = "1"; what.max = "50"; what.value = "3";
     what.setAttribute("aria-label", "How many tasks");
     what.className = "treat-n";
     row.append(el("span", "muted", "After"), what, el("span", "muted", "tasks, I get"));
+  } else if (kind === "set") {
+    const how = page.treatSetHow || "tasks";
+    add.append(smartChips("Set", [["tasks", "Tasks I pick"], ["subject", "A subject"]], how, (v) => { page.treatSetHow = v; drawPage(); }));
+    if (how === "subject") {
+      what = document.createElement("select");
+      what.setAttribute("aria-label", "Which subject");
+      what.className = "treat-subject";
+      const names = [...new Set(open.map((l) => subjectFor({ text: l.raw })).filter(Boolean))];
+      names.forEach((n) => { const o = document.createElement("option"); o.value = n; o.textContent = n; what.append(o); });
+      if (!names.length) add.append(el("p", "muted", "No subject tasks on this day yet. Pick tasks instead."));
+      row.append(el("span", "muted", "After all my"), what, el("span", "muted", "that day, I get"));
+    } else {
+      if (!page.treatSet || page.treatSet.day !== day) page.treatSet = { day, picked: [] };
+      setBox = el("div", "treat-set");
+      open.forEach((l) => {
+        const on = page.treatSet.picked.includes(l.raw);
+        const chip = button(lineLabel(l.raw), "smart-chip treat-set-chip" + (on ? " on" : ""), () => {
+          page.treatSet.picked = on ? page.treatSet.picked.filter((x) => x !== l.raw) : page.treatSet.picked.concat([l.raw]);
+          drawPage();
+        });
+        chip.setAttribute("aria-pressed", String(on));
+        setBox.append(chip);
+      });
+      if (!open.length) setBox.append(el("p", "muted", "Nothing open on this day to pick."));
+      add.append(setBox);
+      row.append(el("span", "muted", page.treatSet.picked.length ? "When those " + page.treatSet.picked.length + " are done, I get" : "Pick the tasks above, then I get"));
+    }
+  } else if (kind === "timer") {
+    what = taskSelect();
+    mins = document.createElement("select");
+    mins.setAttribute("aria-label", "How long");
+    mins.className = "treat-mins";
+    DOING_MINUTES.forEach((m) => { const o = document.createElement("option"); o.value = String(m); o.textContent = m + " min"; if (m === 30) o.selected = true; mins.append(o); });
+    row.append(el("span", "muted", "While doing"), what, el("span", "muted", "for"), mins, el("span", "muted", ", if I finish it I get"));
   } else {
-    what = document.createElement("select");
-    what.setAttribute("aria-label", "Which task");
-    pageLines(day).filter((l) => l.kind === "line" && !l.done && !String(l.raw).startsWith(">")).forEach((l) => {   // 2026-10-20k: was pageLines(today)
-      const o = document.createElement("option"); o.value = l.raw; o.textContent = lineLabel(l.raw); what.append(o);
-    });
+    what = taskSelect();
     row.append(el("span", "muted", "When"), what, el("span", "muted", "is done, I get"));
   }
   const reward = document.createElement("input");
@@ -696,17 +768,212 @@ function pageTreatsCard(day) {
   const save = () => {
     const r = reward.value.trim();
     if (!r) { reward.focus(); return; }
-    const rule = kind === "count" ? { id: "t" + Date.now(), kind, n: Number(what.value) || 3, reward: r, day }
-      : { id: "t" + Date.now(), kind, task: what.value, reward: r, day };   // 2026-10-20k: for this page's day
-    if (kind === "task" && !rule.task) return;
+    let rule = null;
+    if (kind === "count") rule = { id: "t" + Date.now(), kind, n: Number(what.value) || 3, reward: r, day };
+    else if (kind === "set") {
+      const picked = (page.treatSet && page.treatSet.picked) || [];
+      if ((page.treatSetHow || "tasks") === "subject") { if (!what || !what.value) return; rule = { id: "t" + Date.now(), kind, subject: what.value, reward: r, day }; }
+      else { if (!picked.length) { page.said = "Pick the tasks in the set first."; drawPage(); return; } rule = { id: "t" + Date.now(), kind, tasks: picked.slice(), reward: r, day }; }
+      page.treatSet = null;
+    } else if (kind === "timer") rule = { id: "t" + Date.now(), kind, task: what.value, minutes: Number(mins.value) || 30, reward: r, day };
+    else rule = { id: "t" + Date.now(), kind, task: what.value, reward: r, day };   // 2026-10-20k: for this page's day
+    if ((kind === "task" || kind === "timer") && !rule.task) return;
     saveTreats({ rules: t.rules.concat([rule]) });
-    page.said = "Deal. " + (kind === "count" ? "After " + rule.n + " tasks " + (day === today ? "today" : "that day") : "When “" + lineLabel(rule.task) + "” is done") + ", " + r + ".";
+    page.said = "Deal. " + treatWords(treatRules([rule])[0], lineLabel) + (kind === "count" ? " " + (day === today ? "today" : "that day") : "") + ", " + r + "." +
+      (kind === "timer" ? (day === today ? " Press Start timer when you begin." : " Start its timer on the day.") : "");
     drawPage();
   };
   reward.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
   row.append(reward, button("Add", "", save));
   add.append(row);
   card.append(add);
+  return card;
+}
+
+// ---- 2026-10-21: "while doing X". A timer from the Now card (or a "while
+// doing" treat). The laptop holds it, shows its own timer, and when it ends
+// asks "did you finish X?". Treat only on yes; not yet asks again in 15. Kept
+// here too ("tutor-doing") so the card counts down even before the laptop
+// answers.
+function doingNow() {
+  const fromLaptop = doingOf(state.alldays);
+  const mine = recall("tutor-doing", null);
+  const ok = (d) => d && d.text && d.until;
+  let held = null;
+  try { held = JSON.parse((state.alldays && state.alldays.data) || "null"); } catch (error) { held = null; }
+  const laptopKnows = Boolean(held && Object.prototype.hasOwnProperty.call(held, "doing"));
+  const fresh = ok(mine) && mine.sentMs > Date.now() - 90 * 1000;
+  if (fresh) return mine;
+  if (fromLaptop) return fromLaptop;
+  if (laptopKnows) return null;          // the laptop says nothing's running (she answered there)
+  return ok(mine) ? mine : null;
+}
+function startDoing(day, text, minutes, again) {
+  const now = new Date();
+  const until = doingUntil(now, minutes);
+  keep("tutor-doing", { text, day, until, minutes, sentMs: Date.now() });
+  sendEdit({ kind: "doing", text, day, minutes, again: Boolean(again) }).catch(() => {});
+  nowSteer(text);
+  page.nowRaw = text;
+  page.said = again ? "Okay, " + minutes + " more minutes on “" + lineLabel(text) + "”. I'll ask again."
+    : "Timer's going: " + minutes + " minutes on “" + lineLabel(text) + "”. When it ends the tutor asks if you finished it. Stay on it.";
+  drawPage();
+}
+function stopDoing(text, finished) {
+  keep("tutor-doing", null);
+  sendEdit({ kind: "doing", text, stop: true, done: Boolean(finished) }).catch(() => {});
+}
+let doingClock = null;
+function doingTicker() {
+  if (doingClock) return;
+  doingClock = setInterval(() => {
+    const span = document.querySelector(".doing-left");
+    const d = doingNow();
+    if (!span || !d) return;
+    const left = doingLeft(d, new Date());
+    if (left <= 0 && !span.dataset.over) { drawPage(); return; }
+    if (left > 0) span.textContent = left + " min left";
+  }, 15000);
+}
+function doingRow(day, pick) {
+  const d = doingNow();
+  const live = d && d.day === day && pageLines(day).some((l) => l.kind === "line" && !l.done && l.raw === d.text) ? d : null;
+  const box = el("div", "doing-row");
+  if (!live) {
+    if (!pick) return null;
+    box.append(el("span", "muted", "Do it with a timer:"));
+    const ruled = treatsForDay(treatsData().rules, day).find((r) => r.kind === "timer" && r.task === pick.raw);
+    DOING_MINUTES.forEach((m) => box.append(button(m + " min", "quiet doing-go" + (ruled && ruled.minutes === m ? " on" : ""), () => startDoing(day, pick.raw, m))));
+    if (ruled) box.append(el("span", "muted", "(" + ruled.minutes + " min gets you " + ruled.reward + ")"));
+    return box;
+  }
+  const left = doingLeft(live, new Date());
+  if (left > 0) {
+    box.classList.add("on");
+    box.append(el("span", "doing-what", "On “" + lineLabel(live.text) + "”"), el("span", "doing-left", left + " min left"),
+      button("Stop timer", "quiet doing-stop", () => { stopDoing(live.text, false); page.said = "Timer stopped."; drawPage(); }));
+    doingTicker();
+    return box;
+  }
+  box.classList.add("doing-ask");
+  const over = el("span", "doing-left", "Time's up");
+  over.dataset.over = "1";
+  box.append(el("span", "doing-what", "Did you finish “" + lineLabel(live.text) + "”?"), over,
+    button("Yes, done", "doing-yes", () => {
+      stopDoing(live.text, true);
+      markDone(day, live.text, true, true);
+      page.nowRaw = null;
+      page.said = "Ticked off “" + lineLabel(live.text) + "”. Well done.";
+      drawPage();
+    }),
+    button("Not yet", "quiet doing-no", () => startDoing(day, live.text, DOING_AGAIN_MIN, true)));
+  return box;
+}
+
+// ---- 2026-10-21: prayers and meals, with the time she did them.
+function pageBasicsCard(day) {
+  const extras = dayExtras(state.alldays);
+  const prayers = extras.prayers[day] || null;
+  const data = state.pages[day] || {};
+  const mine = data.basics && typeof data.basics === "object" ? data.basics : {};
+  const folded = Boolean(recall("tutor-basics-folded", false));
+  const card = el("div", "page-card page-basics" + (folded ? " folded" : ""));
+  const head = el("div", "now-head");
+  head.append(el("span", "page-label", prayers ? "Prayers and meals" : "Meals"),
+    button(folded ? "Show" : "Hide", "plan-check-fold", () => { keep("tutor-basics-folded", !folded); drawPage(); }));
+  card.append(head);
+  const names = (prayers ? PAGE_PRAYERS : []).concat(PAGE_MEALS);
+  const timeOf = (n) => (n in mine ? mine[n] : extras.logged[day + "|" + n] || "");
+  const doneCount = names.filter((n) => timeOf(n)).length;
+  if (folded) { card.append(el("p", "muted", doneCount + " of " + names.length + " logged")); return card; }
+  const log = (n, at) => {
+    savePage(day, { basics: { ...mine, [n]: at } });
+    sendEdit({ kind: "basic_log", day, name: n, time: at }).catch(() => {});
+    page.basicEdit = null;
+    page.said = at ? n + " logged at " + clockWords(at) + "." : n + " taken off.";
+    drawPage();
+  };
+  names.forEach((n) => {
+    const at = timeOf(n);
+    const row = el("div", "basic-row" + (at ? " done" : ""));
+    const isPrayer = PAGE_PRAYERS.includes(n);
+    row.append(el("span", "basic-name", n));
+    if (isPrayer && prayers[n]) row.append(el("span", "muted basic-due", "about " + clockWords(prayers[n])));
+    else row.append(el("span", "muted basic-due", ""));
+    if (page.basicEdit === day + "|" + n) {
+      const field = document.createElement("input");
+      field.placeholder = "like 1:20pm";
+      field.className = "basic-time";
+      field.setAttribute("aria-label", "When you did " + n);
+      field.value = at ? clockWords(at) : "";
+      const go = () => {
+        const c = parseClock12(field.value);
+        if (!c) { page.said = "Type a time like 1:20pm."; drawPage(); return; }
+        log(n, c);
+      };
+      field.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); if (e.key === "Escape") { page.basicEdit = null; drawPage(); } });
+      row.append(field, button("Save", "quiet", go));
+      setTimeout(() => field.focus(), 0);
+    } else if (at) {
+      row.append(el("span", "basic-at", "Done at " + clockWords(at)),
+        button("Change", "quiet", () => { page.basicEdit = day + "|" + n; drawPage(); }),
+        button("Undo", "quiet", () => log(n, "")));
+    } else {
+      row.append(button(day === isoDay(new Date()) ? "Done now" : "Done", "quiet basic-now", () => {
+        const now = new Date();
+        if (day === isoDay(now)) log(n, String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0"));
+        else { page.basicEdit = day + "|" + n; drawPage(); }
+      }), button("Earlier", "quiet", () => { page.basicEdit = day + "|" + n; drawPage(); }));
+    }
+    card.append(row);
+  });
+  return card;
+}
+
+// ---- 2026-10-21: school hours on a school day, hidden till she opens them,
+// with notes per subject.
+function pageSchoolCard(day) {
+  const list = dayExtras(state.alldays).school[day];
+  if (!list || !list.length) return null;
+  const sum = schoolSummary(list);
+  const openSet = page.schoolOpen || (page.schoolOpen = {});
+  const isOpen = Boolean(openSet[day]);
+  const card = el("div", "page-card page-school" + (isOpen ? "" : " folded"));
+  const head = el("div", "now-head");
+  head.append(el("span", "page-label", "School"),
+    button(isOpen ? "Hide" : "Show", "plan-check-fold school-fold", () => { openSet[day] = !isOpen; drawPage(); }));
+  card.append(head);
+  card.append(el("p", "muted", (sum.from ? clockWords(sum.from) + " to " + clockWords(sum.to) + ", " : "") + sum.lessons + " lessons" + (sum.subjects.length ? ": " + sum.subjects.join(", ") : "")));
+  if (!isOpen) return card;
+  const data = state.pages[day] || {};
+  const notes = data.school && typeof data.school === "object" ? data.school : {};
+  const noted = new Set();
+  list.forEach((l) => {
+    const real = !/break|lunch|tutor group|registration|assembly/i.test(l.subject);
+    const row = el("div", "school-row" + (real ? "" : " gap"));
+    const c = subjectColour(l.subject);
+    const dot = el("span", "now-dot");
+    if (c) dot.style.background = c; else dot.classList.add("none");
+    row.append(dot, el("span", "school-subject", l.subject), el("span", "muted", l.start ? clockWords(l.start) + (l.end ? " to " + clockWords(l.end) : "") : ""));
+    card.append(row);
+    if (!real || noted.has(l.subject)) return;
+    noted.add(l.subject);
+    const box = el("textarea", "school-note");
+    box.placeholder = "Notes for " + l.subject + ": what you did, homework, what to go over";
+    box.setAttribute("aria-label", "Notes for " + l.subject);
+    box.value = String(notes[l.subject] || "");
+    box.addEventListener("input", () => {
+      page.notesDirty = true;
+      clearTimeout(page.schoolTimer);
+      page.schoolTimer = setTimeout(() => {
+        page.notesDirty = false;
+        const now = { ...(((state.pages[day] || {}).school) || {}), [l.subject]: box.value };
+        state.pages[day] = { ...(state.pages[day] || {}), school: now };
+        if (cloud) setDoc(doc(cloud.db, cloud.base + "pages/" + day), { school: now, at: isoNow(new Date()) }, { merge: true }).catch(() => {});
+      }, 800);
+    });
+    card.append(box);
+  });
   return card;
 }
 
@@ -4410,7 +4677,10 @@ function pageSmartCard(found) {
     keep("tutor-smart-gone", { ...recall("tutor-smart-gone", {}), [it.key]: true });   // 2026-10-20b
     if (it.from === "day") markDone(it.day, it.text, true);
     else if (it.from === "hw" && it.id) sendEdit({ kind: "tick", task: Number(it.id) });
-    s.said = "“" + it.text + "” is done" + (it.from === "bank" ? ". It won't come up in Smart plan again (it's still in the bank)" : ", ticked off") + ".";
+    // 2026-10-21: a bank line she's already done comes out of the bank (or is
+    // ticked in her Subjects box), not just out of the plan.
+    else if (it.from === "bank") sendEdit({ kind: "bank_done", text: it.text, list: it.list || "" }).catch(() => {});
+    s.said = "“" + it.text + "” is done" + (it.from === "bank" ? " and out of the bank" : ", ticked off") + ".";
     smartSave(); drawPage();
   };
   // 2026-10-20b: the knobs, on both steps, so she can try more or less and see it.
@@ -4776,6 +5046,8 @@ function pageNowCard(day, lines, times, found) {
         drawPage();
       }));
     card.append(row);
+    const timer = doingRow(day, pick);              // 2026-10-21: "while doing X"
+    if (timer) card.append(timer);
     if (!folded) {
       const late = el("div", "now-late");
       late.append(el("span", "muted", "Running over?"));
@@ -4916,7 +5188,7 @@ function drawPage() {
   const box = $("tab-page");
   if (!box) return;
   if (page.notesDirty && box.contains(document.activeElement) &&
-      document.activeElement.classList.contains("page-notes-box")) return;   // she's writing
+      (document.activeElement.classList.contains("page-notes-box") || document.activeElement.classList.contains("school-note"))) return;   // she's writing (2026-10-21: school notes too)
   const keepFocus = document.activeElement && box.contains(document.activeElement) && document.activeElement.tagName === "INPUT"
     ? { value: document.activeElement.value, ph: document.activeElement.placeholder } : null;
   const day = pageDayNow();
@@ -4928,6 +5200,9 @@ function drawPage() {
              el("h2", "page-date", dayHead(day, new Date())),
              button("›", "quiet page-step", () => { page.day = addDayIso(day, 1); page.held = null; page.said = ""; drawPage(); }));
   if (day !== today) bar.append(button("Today", "quiet", () => { page.day = today; drawPage(); }));
+  // 2026-10-21: "make sure the plan is usable, shows up". Tomorrow's plan is
+  // one press away at any hour, not only after 7pm.
+  if (day === today && new Date().getHours() < 19) bar.append(button("Plan tomorrow", "quiet page-plan-tmrw", () => { page.day = addDayIso(today, 1); page.said = ""; drawPage(); }));
   // 2026-10-19k: split with the calendar, or pop the planner out into its own small window.
   if (!narrow() && !isPopout()) bar.append(button(page.split ? "Just the page" : "Split view", "quiet page-split",
     () => { page.split = !page.split; selectTab("page"); drawPage(); }));
@@ -4974,7 +5249,9 @@ function drawPage() {
   box.append(top);
   const body = el("div", "page-body");
   const right = el("div", "page-right");
-  right.append(pageTaskList(day, lines, times), pageTreatsCard(day), pageNotesCard(day, data), pageFunCard());   // 2026-10-19o: fun stuff bank; 2026-10-20e: treats
+  const school = pageSchoolCard(day);                               // 2026-10-21: school hours, hidden till opened
+  if (school) right.append(school);
+  right.append(pageTaskList(day, lines, times), pageBasicsCard(day), pageTreatsCard(day), pageNotesCard(day, data), pageFunCard());   // 2026-10-19o: fun stuff bank; 2026-10-20e: treats; 2026-10-21: prayers and meals
   const carry = pageCarryCard(day, lines, data);
   if (carry) right.append(carry);
   // 2026-10-20h: "i thought we quit time blocks??" The half hour grid is off
@@ -5362,6 +5639,7 @@ function start() {
     stops.push(onSnapshot(doc(db, base + "live/alldays"), (snap) => {
       state.alldays = snap.exists() ? snap.data() : null;
       drawTasks(); drawCalendarSoft(); drawPage();
+      try { treatsFromLaptop(); } catch (error) { /* never stops the page */ }   // 2026-10-21
     }));
     stops.push(onSnapshot(collection(db, base + "pages"), (snap) => {   // 2026-10-19i
       const pages = {};
