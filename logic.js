@@ -1540,7 +1540,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v77";   // 2026-10-21: was v76 (20k: was v75)
+export const APP_VERSION = "v78";   // 2026-10-21c: was v77 (21: was v76)
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -2835,4 +2835,22 @@ export function linkParts(text) {
   }
   if (last < s.length) out.push({ text: s.slice(last) });
   return out;
+}
+
+// ---- 2026-10-21c: "maybe this could be collapseable? and also id like it to
+// show the mini lists". The Day page's Tasks card groups a heading ("draw
+// strawberries :", "finish math!!:") with the lines under it, down to the next
+// gap or heading, as one mini list. Lines with no heading are loose.
+export function pageGroups(lines) {
+  const loose = [];
+  const groups = [];
+  let open = null;
+  (lines || []).forEach((l) => {
+    if (!l) return;
+    if (l.kind === "gap") { open = null; return; }
+    if (l.kind === "head") { open = { head: l.text.trim(), raw: l.raw, items: [] }; groups.push(open); return; }
+    if (l.kind !== "line" || l.repeat) return;
+    if (open) open.items.push(l); else loose.push(l);
+  });
+  return { loose, groups: groups.filter((g) => g.items.length) };
 }
