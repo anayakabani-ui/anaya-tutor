@@ -1048,9 +1048,9 @@ body.popout #app { max-width: none; }
 .page-school .school-note { width: 100%; min-height: 54px; margin: 4px 0 8px 18px; width: calc(100% - 18px); resize: vertical; }
 /* 2026-10-21: + Add in each Now card column */
 .now-block .now-add-go { margin-top: 6px; width: 100%; text-align: left; font-size: 0.85rem; padding: 5px 10px; }
-.now-block .now-add { display: flex; gap: 6px; margin-top: 6px; }
+.now-block .now-add { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
 .now-block .now-add input { flex: 1; min-width: 0; padding: 6px 8px; font-size: 0.88rem; }
-.now-block .now-add button { padding: 6px 10px; font-size: 0.85rem; }
+.now-block .now-add button { flex: 0 0 auto; width: auto !important; margin: 0 !important; padding: 6px 12px; font-size: 0.85rem; }   /* 2026-10-21d: "doesnt work": the site's form button rule made Add full width and squashed the box to a sliver */
 /* 2026-10-21c: mini lists in the Day page's Tasks card */
 .page-tasks .mini-list { margin: 4px 0; border-radius: var(--r-chip); background: color-mix(in srgb, var(--group) 6%, var(--card)); }
 .page-tasks .mini-list-head { display: flex; align-items: center; gap: 8px; width: 100%; background: transparent; color: var(--text); padding: 7px 10px; font-weight: 600; text-align: left; box-shadow: none; }
