@@ -1540,7 +1540,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v76";   // 2026-10-20k: was v75 (20j: was v74)
+export const APP_VERSION = "v77";   // 2026-10-21: was v76 (20k: was v75)
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -2057,7 +2057,7 @@ export function notesIncoming(box, snap, nowMs) {
 export const PAGE_FROM_HOUR = 7;
 export const PAGE_TO_HOUR = 23;
 export const PAGE_MOST_HABITS = 5;
-export const PAGE_MOST_STARS = 3;    // 2026-10-19n: "id like to add a few north stars"
+export const PAGE_MOST_STARS = 10;   // 2026-10-21: "i can have more than 3 North Stars" (was 3, 19n: "id like to add a few north stars")
 export const PAGE_HABIT_IDEAS = ["Read 20 pages", "Exercise", "Outside 20 mins", "Water", "No phone in bed"];
 
 export function pageData(raw) {
@@ -2418,7 +2418,9 @@ export function smartPlan(items, answers, found, today, deadline, opts) {
     if (it.kind === "test") {
       const had = goOvers(it.text);
       had.forEach((g) => place(it, g.text, g.day, "keep", lineMins(g.day, g.text)));
-      const n = Math.max(1, SMART_SESSIONS[it.confident] || 2);
+      // 2026-10-21: "there are doubles omg! revmove them - only need to do tasks once". One go each
+      // (it was 1, 2 or 3 by how confident she was: SMART_SESSIONS).
+      const n = SMART_ONCE ? 1 : Math.max(1, SMART_SESSIONS[it.confident] || 2);
       const onDay = it.from === "day" && it.day >= now && it.day <= last;
       for (let i = had.length; i < n - (onDay ? 1 : 0); i++) {
         const isLast = i === n - 1 && !onDay;
@@ -2630,11 +2632,28 @@ export function nowRollover(found, today, locks) {
 // {id, kind: "count", n, reward} (n tasks ticked today) or {id, kind: "task",
 // task, reward} (that task ticked). Each is earned once a day.
 export function treatRules(raw) {
+  // 2026-10-21: two more kinds. "set": after a set she picks (some tasks, or
+  // every task of one subject that day). "timer": while doing one task, with a
+  // timer; earned only when she says yes, she finished it (the line is ticked).
+  const setTasks = (r) => (Array.isArray(r.tasks) ? r.tasks : []).map((t) => String(t || "").trim()).filter(Boolean).slice(0, 30);
   return (Array.isArray(raw) ? raw : []).filter((r) => r && String(r.reward || "").trim() &&
-    ((r.kind === "count" && Number(r.n) >= 1) || (r.kind === "task" && String(r.task || "").trim())))
+    ((r.kind === "count" && Number(r.n) >= 1) || (r.kind === "task" && String(r.task || "").trim()) ||
+     (r.kind === "set" && (setTasks(r).length || String(r.subject || "").trim())) ||
+     (r.kind === "timer" && String(r.task || "").trim())))
     .map((r) => ({ id: String(r.id || ""), kind: r.kind, n: Math.max(1, Math.min(50, Math.round(Number(r.n) || 1))),
                    task: String(r.task || "").trim(), reward: String(r.reward).trim().slice(0, 80),
-                   day: /^\d{4}-\d{2}-\d{2}$/.test(String(r.day || "")) ? String(r.day) : "" }));
+                   day: /^\d{4}-\d{2}-\d{2}$/.test(String(r.day || "")) ? String(r.day) : "",
+                   tasks: r.kind === "set" ? setTasks(r) : [],
+                   subject: r.kind === "set" ? String(r.subject || "").trim() : "",
+                   minutes: r.kind === "timer" ? Math.max(5, Math.min(180, Math.round(Number(r.minutes) || 30))) : 0 }));
+}
+// 2026-10-21: what a "set" rule counts: its own tasks, or that subject's lines
+// on the day (ctx.lines: [{raw, done, subject}]).
+function treatSetParts(rule, done, ctx) {
+  if (rule.tasks.length) return { all: rule.tasks.length, got: rule.tasks.filter((t) => done.includes(t.toLowerCase())).length };
+  const want = rule.subject.toLowerCase();
+  const mine = ((ctx && ctx.lines) || []).filter((l) => String(l.subject || "").toLowerCase() === want);
+  return { all: mine.length, got: mine.filter((l) => l.done).length };
 }
 // 2026-10-20k: "its cause im planning for tmrw. it should do it by whatwever
 // im on". A rule made on a day's page is for that day (r.day); an older rule
@@ -2643,17 +2662,110 @@ export function treatsForDay(rules, day) {
   return treatRules(rules).filter((r) => !r.day || r.day === day);
 }
 // Which rules are earned now that weren't before. doneTexts: today's ticked lines.
-export function treatsEarned(rules, doneTexts, got, day) {
+export function treatsEarned(rules, doneTexts, got, day, ctx) {
   const have = new Set(got || []);
   const done = (doneTexts || []).map((t) => String(t).trim().toLowerCase());
   // 2026-10-20k: with a day, only that day's rules (and every-day ones) count.
-  return (day ? treatsForDay(rules, day) : treatRules(rules)).filter((r) => !have.has(r.id) &&
-    (r.kind === "count" ? done.length >= r.n : done.includes(r.task.toLowerCase())));
+  return (day ? treatsForDay(rules, day) : treatRules(rules)).filter((r) => !have.has(r.id) && treatMet(r, done, ctx));
 }
-export function treatProgress(rule, doneTexts) {
+function treatMet(r, done, ctx) {
+  if (r.kind === "count") return done.length >= r.n;
+  if (r.kind === "set") { const p = treatSetParts(r, done, ctx); return p.all > 0 && p.got >= p.all; }
+  return done.includes(r.task.toLowerCase());          // task, and timer (ticked on her yes)
+}
+export function treatProgress(rule, doneTexts, ctx) {
   const done = (doneTexts || []).map((t) => String(t).trim().toLowerCase());
   if (rule.kind === "count") return Math.min(rule.n, done.length) + " of " + rule.n;
+  if (rule.kind === "set") { const p = treatSetParts(rule, done, ctx); return p.all ? p.got + " of " + p.all : "nothing on this day yet"; }
   return done.includes(rule.task.toLowerCase()) ? "done" : "not yet";
+}
+// How a rule reads on the card.
+export function treatWords(r, label) {
+  const name = (t) => "\u201c" + (label ? label(t) : t) + "\u201d";
+  if (r.kind === "count") return "After " + r.n + " " + (r.n === 1 ? "task" : "tasks");
+  if (r.kind === "set") return r.tasks.length ? "After " + r.tasks.map(name).join(", ") : "After all my " + r.subject + " today";
+  if (r.kind === "timer") return "While doing " + name(r.task) + " (" + r.minutes + " min timer)";
+  return "When " + name(r.task) + " is done";
+}
+
+// ---- 2026-10-21: "while doing X". A timer from the Now card; when it ends the
+// tutor asks "did you finish X?". The laptop sends what it's holding in
+// live/alldays as "doing": {text, day, until "YYYY-MM-DD HH:MM:SS", minutes, asks}.
+export const SMART_ONCE = true;     // 2026-10-21: a task is done once, no "Go over X (1 of 2)"
+export const DOING_MINUTES = [15, 25, 30, 45, 60];
+export const DOING_AGAIN_MIN = 15;
+export function doingOf(live) {
+  let held = null;
+  try { held = JSON.parse((live && live.data) || "null"); } catch (error) { held = null; }
+  const d = held && held.doing;
+  if (!d || typeof d !== "object" || !String(d.text || "").trim()) return null;
+  const until = String(d.until || "");
+  if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(until)) return null;
+  return { text: String(d.text).trim(), day: String(d.day || until.slice(0, 10)), until,
+           minutes: Math.round(Number(d.minutes) || 0), asks: Math.round(Number(d.asks) || 0) };
+}
+export function doingLeft(doing, now) {
+  if (!doing || !doing.until) return null;
+  const [d, t] = doing.until.split(" ");
+  const [y, m, dd] = d.split("-").map(Number);
+  const [hh, mm, ss] = t.split(":").map(Number);
+  const end = new Date(y, m - 1, dd, hh, mm, ss || 0);
+  return Math.ceil((end.getTime() - now.getTime()) / 60000);
+}
+export function doingUntil(now, minutes) {
+  const end = new Date(now.getTime() + Math.round(Number(minutes) || 0) * 60000);
+  const p = (n) => String(n).padStart(2, "0");
+  return end.getFullYear() + "-" + p(end.getMonth() + 1) + "-" + p(end.getDate()) + " " + p(end.getHours()) + ":" + p(end.getMinutes()) + ":" + p(end.getSeconds());
+}
+
+// ---- 2026-10-21: the Day page's prayers and meals, and school hours. The
+// laptop sends its Muscat prayer times ("prayers": {day: {Fajr: "05:01" ...}}),
+// what she's logged ("logged": {"day|Name": "HH:MM"}), and the lessons on
+// school days ("school": {day: [{subject, start, end}]}).
+export const PAGE_PRAYERS = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"];
+export const PAGE_MEALS = ["Breakfast", "Fruit", "Lunch", "Dinner"];
+export function dayExtras(live) {
+  let held = null;
+  try { held = JSON.parse((live && live.data) || "null"); } catch (error) { held = null; }
+  const clock = (v) => /^\d{2}:\d{2}$/.test(String(v || "")) ? String(v) : "";
+  const out = { prayers: {}, logged: {}, school: {} };
+  if (!held) return out;
+  if (held.prayers && typeof held.prayers === "object") Object.keys(held.prayers).forEach((day) => {
+    const one = {};
+    PAGE_PRAYERS.forEach((n) => { const c = clock(held.prayers[day] && held.prayers[day][n]); if (c) one[n] = c; });
+    out.prayers[day] = one;
+  });
+  if (held.logged && typeof held.logged === "object") Object.keys(held.logged).forEach((k) => {
+    const c = clock(held.logged[k]);
+    if (c && /^\d{4}-\d{2}-\d{2}\|.+/.test(k)) out.logged[k] = c;
+  });
+  if (held.school && typeof held.school === "object") Object.keys(held.school).forEach((day) => {
+    const list = Array.isArray(held.school[day]) ? held.school[day] : [];
+    out.school[day] = list.filter((l) => l && String(l.subject || "").trim())
+      .map((l) => ({ subject: String(l.subject).trim(), start: clock(l.start), end: clock(l.end) }));
+  });
+  return out;
+}
+// "1:20pm", "1pm", "13:20", "120pm" -> "13:20"; anything else "".
+export function parseClock12(text) {
+  const s = String(text || "").trim().toLowerCase().replace(/\s+/g, "").replace(/\./g, ":");
+  let m = s.match(/^(\d{1,2})(?::?(\d{2}))?(am|pm)?$/);
+  if (!m) return "";
+  let h = Number(m[1]);
+  const min = m[2] ? Number(m[2]) : 0;
+  if (min > 59) return "";
+  if (m[3]) { if (h < 1 || h > 12) return ""; if (m[3] === "pm" && h !== 12) h += 12; if (m[3] === "am" && h === 12) h = 0; }
+  else if (h > 23) return "";
+  return String(h).padStart(2, "0") + ":" + String(min).padStart(2, "0");
+}
+// The school day in one line: first start, last end, how many real lessons.
+export const SCHOOL_NOT_LESSONS = /break|lunch|tutor group|registration|assembly/i;
+export function schoolSummary(list) {
+  const real = (list || []).filter((l) => !SCHOOL_NOT_LESSONS.test(l.subject));
+  const starts = (list || []).map((l) => l.start).filter(Boolean).sort();
+  const ends = (list || []).map((l) => l.end || l.start).filter(Boolean).sort();
+  return { from: starts[0] || "", to: ends[ends.length - 1] || "", lessons: real.length,
+           subjects: [...new Set(real.map((l) => l.subject))] };
 }
 
 
