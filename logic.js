@@ -1540,7 +1540,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v80";   // 2026-10-21f: was v79 (21d: was v78, 21c: was v77)
+export const APP_VERSION = "v81";   // 2026-10-21g: was v80 (21f: was v79, 21d: was v78)
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -3009,5 +3009,32 @@ export function flowBreak(times, day, cur, nowMin, minutes, done) {
     if (t.text === cur && t.start <= nowMin && t.end > nowMin) out[t.key] = timeSpan(t.start, t.end + n);
     else if (t.start >= nowMin) out[t.key] = timeSpan(t.start + n, t.end + n);
   });
+  return out;
+}
+
+// ---- 2026-10-21g: "cant shift / drag select and move tasks. itll only move
+// one task." Several picked tasks dropped at a time: each keeps its place
+// next to the others (the one held lands where it's dropped). Dropped on a
+// line between two tasks (pack), they go one after another from there.
+// items: [{text, from, start (minutes or null), len}]
+export function manyTimes(items, heldText, at, pack) {
+  const list = (items || []).map((x) => ({ ...x, len: Math.max(15, Number(x.len) || 30) }));
+  const timed = list.filter((x) => Number.isFinite(x.start)).sort((a, b) => a.start - b.start);
+  const loose = list.filter((x) => !Number.isFinite(x.start));
+  const out = [];
+  if (pack || !timed.length) {
+    let c = at;
+    timed.concat(loose).forEach((x) => { out.push({ text: x.text, from: x.from, at: timeSpan(c, c + x.len) }); c += x.len; });
+    return out;
+  }
+  const held = timed.find((x) => x.text === heldText) || timed[0];
+  const delta = at - held.start;
+  let last = at;
+  timed.forEach((x) => {
+    const s = Math.max(0, Math.min(23 * 60 + 45, x.start + delta));
+    out.push({ text: x.text, from: x.from, at: timeSpan(s, s + x.len) });
+    last = Math.max(last, s + x.len);
+  });
+  loose.forEach((x) => { out.push({ text: x.text, from: x.from, at: timeSpan(last, last + x.len) }); last += x.len; });
   return out;
 }
