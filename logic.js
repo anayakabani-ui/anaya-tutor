@@ -1540,7 +1540,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v83";   // 2026-10-22b: was v82 (22: was v81, 21g: was v80)
+export const APP_VERSION = "v84";   // 2026-10-22c: was v83 (22b: was v82, 22: was v81)
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -3038,3 +3038,21 @@ export function manyTimes(items, heldText, at, pack) {
   loose.forEach((x) => { out.push({ text: x.text, from: x.from, at: timeSpan(last, last + x.len) }); last += x.len; });
   return out;
 }
+
+// ---- 2026-10-22c: "ADD A SPINNY WHEEL so i can do a random task ... and i
+// can be like spend atleast 5 mins on that task". Which slice, and how far to
+// turn the wheel so that slice's middle stops under the pointer at the top.
+export function spinPick(count, rnd) {
+  const n = Math.max(1, Math.floor(Number(count) || 1));
+  const r = Number.isFinite(rnd) ? rnd : Math.random();
+  return Math.min(n - 1, Math.max(0, Math.floor(r * n)));
+}
+export function spinTurn(index, count, from, turns) {
+  const n = Math.max(1, count);
+  const want = ((360 - (index + 0.5) * 360 / n) % 360 + 360) % 360;   // where the wheel must end, mod 360
+  const base = Number(from) || 0;
+  const now = ((base % 360) + 360) % 360;
+  return base + 360 * Math.max(1, turns || 5) + ((want - now + 360) % 360);
+}
+export const SPIN_COLOURS = ["#4C8DF6", "#14B8A6", "#3E9A4A", "#E86AA6", "#2F8FE0", "#5FD4C6", "#EE6E66", "#7BC67E"];
+export const SPIN_MOST = 12;
