@@ -1142,8 +1142,12 @@ function placeAt(held, day, at) {
   // 2026-10-19: a task she'd pulled longer keeps its length when moved.
   const had = mergedTimes(allDays(state.alldays), state.timesWaiting, Date.now())[held.from + "|" + held.text];
   if (at && timeParts(had) && timeParts(had).end !== null) {
-    const s = minutesOf(at);
-    at = timeSpan(s, s + taskLength(had));
+    // 2026-10-22: "put tasks inbetween it just makes the task delete". A line
+    // between two sends a span ("10:30-11:00"); minutesOf only reads "10:30",
+    // so a task with a length went to midnight (above the 5am lock: gone).
+    const p = timeParts(at);
+    const s = p ? p.start : minutesOf(at);
+    if (s !== null) at = timeSpan(s, s + taskLength(had));
   }
   if (held.from === day) return sendTime(day, held.text, at);
   return Promise.resolve(moveLine(held, day)).then((moved) => {
