@@ -865,6 +865,19 @@ function doingRow(day, pick) {
     box.append(el("span", "muted", "Do it with a timer:"));
     const ruled = treatsForDay(treatsData().rules, day).find((r) => r.kind === "timer" && r.task === pick.raw);
     DOING_MINUTES.forEach((m) => box.append(button(m + " min", "quiet doing-go" + (ruled && ruled.minutes === m ? " on" : ""), () => startDoing(day, pick.raw, m))));
+    // 2026-10-22: "that i can also add a custom amt in". 5 to 180 minutes (the laptop's own limits).
+    const own = document.createElement("input");
+    own.type = "number"; own.min = "5"; own.max = "180"; own.step = "5";
+    own.className = "doing-own";
+    own.placeholder = "Other";
+    own.setAttribute("aria-label", "Your own number of minutes");
+    const goOwn = () => {
+      const m = Math.round(Number(own.value));
+      if (!m || m < 5 || m > 180) { page.said = "Pick between 5 and 180 minutes."; drawPage(); return; }
+      startDoing(day, pick.raw, m);
+    };
+    own.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); goOwn(); } });
+    box.append(own, el("span", "muted", "min"), button("Go", "quiet doing-own-go", goOwn));
     if (ruled) box.append(el("span", "muted", "(" + ruled.minutes + " min gets you " + ruled.reward + ")"));
     return box;
   }
@@ -1795,6 +1808,12 @@ setInterval(() => {
   }
 }, 20000);
 
+// 2026-10-22: the bar is on the Day page too, so both redraw.
+function drawFlowViews(soft) {
+  if (state.calSaid) page.said = state.calSaid;
+  if (soft) drawCalendarSoft(); else drawCalendar();
+  try { drawPage(); } catch (error) { /* never stops the calendar */ }
+}
 function flowOn(day, raw) { const f = state.flow; return Boolean(f && f.day === day && f.raw === raw); }
 function setFlow(f) { state.flow = f; keep("tutor-flow", f); }
 function minutesNow() { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); }
@@ -1805,7 +1824,7 @@ function laptopFresh() {
 // Start a task now (or switch to it from the one she's on).
 function flowStart(day, raw) {
   const today = isoDay(new Date());
-  if (day !== today) { state.calSaid = "Only today's tasks can be started."; drawCalendar(); return; }
+  if (day !== today) { state.calSaid = "Only today's tasks can be started."; drawFlowViews(); return; }
   const times = mergedTimes(allDays(state.alldays), state.timesWaiting, Date.now());
   const now = minutesNow();
   const own = timeParts(times[day + "|" + raw]);
@@ -1821,7 +1840,7 @@ function flowStart(day, raw) {
     (was ? ". “" + lineLabel(was) + "” carries on straight after it" : "") +
     (n && !was ? ". " + n + (n === 1 ? " task" : " tasks") + " moved to make room" : "") +
     (st.nextText ? ". First step: " + st.nextText : "") + ". If it runs over, it grows and the rest move down.";
-  drawCalendar();
+  drawFlowViews();
 }
 // It's done: the next one comes up to now.
 function flowDone(quiet) {
@@ -1836,12 +1855,12 @@ function flowDone(quiet) {
   if (next) nowSteer(next);
   if (!quiet) cheer();
   state.calSaid = next ? "Done! Next up: “" + lineLabel(next) + "”, from now." : "Done! That was the last one with a time today.";
-  drawCalendar();
+  drawFlowViews();
 }
 function flowStop() {
   setFlow(null);
   state.calSaid = "Stopped. Times stay where they are.";
-  drawCalendar();
+  drawFlowViews();
 }
 function flowBreakGo(minutes) {
   const f = state.flow;
@@ -1861,7 +1880,7 @@ function flowBreakGo(minutes) {
   state.calSaid = minutes + " minute break till " + clockWords(hhmm(now + minutes)) + "." +
     (fresh ? (yt ? " The laptop opens YouTube for it and starts the timer." : " The laptop starts the timer and moves today's tasks on.")
       : " The laptop isn't answering, so tasks moved here" + (yt ? " (YouTube can only be opened by the laptop)." : "."));
-  drawCalendar();
+  drawFlowViews();
 }
 // Every 30 seconds: ticked somewhere else? Running over? (Only grows while the
 // laptop is answering, so nothing piles up while it's off.)
@@ -1873,7 +1892,7 @@ function flowTick() {
   const found = allDays(state.alldays);
   if (!found) return;
   const line = ((found.days || []).find((d) => d.day === f.day) || { lines: [] }).lines.find((l) => String(l.text).trim() === f.raw);
-  if (!line) { setFlow(null); drawCalendarSoft(); return; }
+  if (!line) { setFlow(null); drawFlowViews(true); return; }
   if (line.done) { flowDone(true); return; }
   const now = minutesNow();
   if (f.ext && now < f.ext) return;
@@ -1885,11 +1904,11 @@ function flowTick() {
   moveTimes(f.day, moved, "");
   setFlow({ ...f, ext: mine.end });
   state.calSaid = "“" + lineLabel(f.raw) + "” is running over, so it's on till " + clockWords(hhmm(mine.end)) + " and the rest moved down.";
-  drawCalendarSoft();
+  drawFlowViews(true);
 }
 setInterval(() => { try { flowTick(); } catch (error) { /* never stops the page */ } }, 30000);
 
-function flowBar(found, now) {
+function flowBar(found, now, onPage) {
   const f = state.flow;
   if (!f || f.day !== isoDay(now)) return null;
   const bar = el("div", "flow-bar");
@@ -1902,7 +1921,7 @@ function flowBar(found, now) {
   const dot = el("span", "flow-dot");
   const colour = subjectColour(subjectFor({ text: f.raw }));
   if (colour) dot.style.background = colour;
-  what.append(dot, el("span", "flow-label muted", "On it"), el("span", "flow-name", lineLabel(f.raw)));
+  what.append(dot, el("span", "flow-label muted", "On it"), el("span", "flow-name" + (onPage ? " now-name" : ""), lineLabel(f.raw)));
   if (st.all) what.append(el("span", "flow-step", st.nextText ? "Step " + (st.next + 1) + " of " + st.all + ": " + st.nextText : "All " + st.all + " steps done"));
   if (span) what.append(el("span", "flow-till muted", "till " + clockWords(hhmm(span.end !== null ? span.end : span.start + 30)) + ", longer if you need"));
   bar.append(what);
@@ -1913,10 +1932,10 @@ function flowBar(found, now) {
     sb.title = "Tick off “" + st.nextText + "”";
     acts.append(sb);
   }
-  const db = button("Done", "flow-done", () => { markDone(f.day, f.raw, true); flowDone(true); });
+  const db = button("Done", "flow-done" + (onPage ? " now-done" : ""), () => { markDone(f.day, f.raw, true); flowDone(true); });
   db.prepend(icon("tick"));
   db.title = "It's done: the next task comes up to now";
-  const sw = button(state.flowSwitchOpen ? "Close" : "Switch", "quiet", () => { state.flowSwitchOpen = !state.flowSwitchOpen; drawCalendar(); });
+  const sw = button(state.flowSwitchOpen ? "Close" : "Switch", "quiet", () => { state.flowSwitchOpen = !state.flowSwitchOpen; drawFlowViews(); });
   sw.title = "Do something else now. This one carries on straight after it.";
   acts.append(db, sw);
   const br = el("div", "flow-break");
@@ -1926,7 +1945,7 @@ function flowBar(found, now) {
     b.title = "A " + m + " minute break from now. What's after moves down.";
     br.append(b);
   });
-  const yt = button("YouTube", "smart-chip" + (state.flowBreakYt ? " on" : ""), () => { state.flowBreakYt = !state.flowBreakYt; drawCalendar(); });
+  const yt = button("YouTube", "smart-chip" + (state.flowBreakYt ? " on" : ""), () => { state.flowBreakYt = !state.flowBreakYt; drawFlowViews(); });
   yt.setAttribute("aria-pressed", String(Boolean(state.flowBreakYt)));
   yt.title = "The break is for YouTube (the laptop opens it for the break)";
   br.append(yt);
@@ -5671,24 +5690,39 @@ function pageNowCard(day, lines, times, found) {
     if (c) d.style.background = c; else d.classList.add("none");
     return d;
   };
-  if (!pick) {
+  // 2026-10-22: "i LOVE this so much. i want this to be on the day page-
+  // remove the this one, but i like the timer bit tho (that i can also add a
+  // custom amt in)". The calendar's "On it" bar is the top of the Day page;
+  // before anything's started it's an "Up next" bar with Start it.
+  const flowing = state.flow && state.flow.day === day && day === isoDay(now) && live.some((l) => l.raw === state.flow.raw) ? state.flow : null;
+  if (flowing) {
+    const bar = flowBar(found, now, true);
+    if (bar) card.append(bar);
+    const on = live.find((l) => l.raw === flowing.raw);
+    const timer = doingRow(day, on);
+    if (timer) card.append(timer);
+  } else if (!pick) {
     card.append(el("p", "now-name", "Nothing left on today. Well done."));
   } else {
-    const name = el("p", "now-name");
-    name.append(dot(pick.raw), document.createTextNode(lineLabel(pick.raw)));
-    card.append(name);
+    const bar = el("div", "flow-bar flow-idle");
+    const what = el("div", "flow-what");
+    const name = el("span", "flow-name now-name");
+    name.append(document.createTextNode(lineLabel(pick.raw)));
+    what.append(dot(pick.raw), el("span", "flow-label muted", "Up next"), name);
     const span = timeParts(times[day + "|" + pick.raw]);
-    if (span && !folded) card.append(el("p", "muted", "Planned " + clockWords(hhmm(span.start)) + (span.end !== null ? " to " + clockWords(hhmm(span.end)) : "")));
-    const row = el("div", "now-actions");
-    row.append(
-      button("Done", "now-done", () => {
+    if (span) what.append(el("span", "flow-till muted", clockWords(hhmm(span.start)) + (span.end !== null ? " to " + clockWords(hhmm(span.end)) : "")));
+    bar.append(what);
+    const row = el("div", "flow-acts");
+    const go = button("Start it", "flow-done now-start", () => flowStart(day, pick.raw));
+    go.title = "Start it now. If it runs over it grows and the rest move down; when it's done the next comes up.";
+    row.append(go,
+      button("Done", "quiet now-done", () => {
         markDone(day, pick.raw, true, true);
         nowSteer(pick.raw);
         page.nowRaw = null;
         page.said = "Ticked off “" + lineLabel(pick.raw) + "”. Next one's up.";
         drawPage();
-      }));
-    if (!folded) row.append(
+      }),
       button("Pick something else", "quiet", () => { page.nowChoose = !page.nowChoose; drawPage(); }),
       button("Not today", "quiet", () => {
         page.nowRaw = null;
@@ -5696,30 +5730,11 @@ function pageNowCard(day, lines, times, found) {
         moveLine({ text: pick.raw, from: day }, addDayIso(day, 1));
         page.said = "“" + lineLabel(pick.raw) + "” is on tomorrow. That's fine.";
         drawPage();
-      }),
-      // 2026-10-20f: "i also want to be able like just delete this".
-      button("Delete", "quiet now-del", () => {
-        page.nowRaw = null;
-        deleteLine(day, pick.raw);
-        page.said = "Deleted “" + lineLabel(pick.raw) + "”. Ctrl+Z on the calendar brings it back.";
-        drawPage();
       }));
-    card.append(row);
+    bar.append(row);
+    card.append(bar);
     const timer = doingRow(day, pick);              // 2026-10-21: "while doing X"
     if (timer) card.append(timer);
-    if (!folded) {
-      const late = el("div", "now-late");
-      late.append(el("span", "muted", "Running over?"));
-      [15, 30, 60].forEach((m) => late.append(button("+" + m + " min", "quiet", () => {
-        // 2026-10-20e: only says it moved things when something did.
-        const from = nowMin - 15;
-        const any = Object.keys(times).some((k) => { const p = k.startsWith(day + "|") && timeParts(times[k]); return p && p.start >= from; });
-        if (any) shiftDay(day, m);
-        page.said = any ? "Everything still to come today is " + m + " minutes later." : "Nothing with a time is still to come today.";
-        drawPage();
-      })));
-      card.append(late);
-    }
   }
   if (folded) return card;
   // 2026-10-20h: her four columns, least to most needed. Press one to do it
