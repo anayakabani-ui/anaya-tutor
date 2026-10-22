@@ -1540,7 +1540,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v82";   // 2026-10-22: was v81 (21g: was v80, 21f: was v79)
+export const APP_VERSION = "v83";   // 2026-10-22b: was v82 (22: was v81, 21g: was v80)
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
