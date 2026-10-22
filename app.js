@@ -45,7 +45,8 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          NOW_PRIOS, nowColumns, nowPickPrio, nowPrioOf,
          guessSubjectLoose, linkParts, pageGroups,
          BANK_DOCKS, bankWhere, bankWidth, stepsOf, stepsWords, stepsLeft, flowTasks, insertGap, insertMarks,   // 2026-10-21f
-         roundDown5, flowExtend, flowAfterDone, flowSwitch, flowBreak, manyTimes } from "./logic.js";   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
+         roundDown5, flowExtend, flowAfterDone, flowSwitch, flowBreak, manyTimes,
+         spinPick, spinTurn, SPIN_COLOURS, SPIN_MOST } from "./logic.js";   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
 
 const $ = (id) => document.getElementById(id);
 // 2026-10-18b: a line's subject, by its words, from the bank's subject lists.
@@ -1938,6 +1939,7 @@ function flowBar(found, now, onPage) {
   const sw = button(state.flowSwitchOpen ? "Close" : "Switch", "quiet", () => { state.flowSwitchOpen = !state.flowSwitchOpen; drawFlowViews(); });
   sw.title = "Do something else now. This one carries on straight after it.";
   acts.append(db, sw);
+  if (onPage) acts.append(spinButton(f.day));       // 2026-10-22c
   const br = el("div", "flow-break");
   br.append(el("span", "muted", "Break"));
   [5, 10, 15, 20].forEach((m) => {
@@ -5724,6 +5726,7 @@ function pageNowCard(day, lines, times, found) {
         drawPage();
       }),
       button("Pick something else", "quiet", () => { page.nowChoose = !page.nowChoose; drawPage(); }),
+      spinButton(day),
       button("Not today", "quiet", () => {
         page.nowRaw = null;
         nowSteer(pick.raw);
@@ -5831,6 +5834,101 @@ function pageNowCard(day, lines, times, found) {
     card.append(other);
   }
   return card;
+}
+
+// ---- 2026-10-22c: the spinny wheel. Today's open tasks round a wheel; it
+// spins and lands on one; "spend at least 5 min" starts the timer on it (the
+// laptop's "did you finish?" timer, 5 minutes is its least).
+function spinButton(day) {
+  const b = button("Spin", "quiet spin-open", () => spinWheel(day));
+  b.title = "Spin the wheel for a random task";
+  return b;
+}
+function spinWheel(day) {
+  const lines = pageLines(day).filter((l) => l.kind === "line" && !l.done && !l.sub && !l.repeat && !deleting(day, l.raw)).slice(0, SPIN_MOST);
+  if (lines.length < 2) { page.said = "There need to be at least 2 tasks left to spin."; drawPage(); return; }
+  document.querySelectorAll(".spin-pop").forEach((x) => x.remove());
+  const pop = el("div", "spin-pop");
+  pop.setAttribute("role", "dialog");
+  pop.setAttribute("aria-label", "Spin for a random task");
+  const box = el("div", "spin-box");
+  const shut = () => { pop.remove(); document.removeEventListener("keydown", esc); };
+  const esc = (e) => { if (e.key === "Escape") shut(); };
+  document.addEventListener("keydown", esc);
+  pop.addEventListener("click", (e) => { if (e.target === pop) shut(); });
+  const top = el("div", "spin-top");
+  top.append(el("p", "spin-title", "Spin for a task"), iconButton("close", "Close (Esc)", shut));
+  box.append(top);
+  const ns = "http://www.w3.org/2000/svg";
+  const wrap = el("div", "spin-wrap");
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "-150 -150 300 300");
+  svg.classList.add("spin-wheel");
+  const n = lines.length, r = 140;
+  const pt = (deg, rad) => [rad * Math.sin(deg * Math.PI / 180), -rad * Math.cos(deg * Math.PI / 180)];
+  lines.forEach((l, i) => {
+    const a0 = i * 360 / n, a1 = (i + 1) * 360 / n, mid = (a0 + a1) / 2;
+    const [x0, y0] = pt(a0, r), [x1, y1] = pt(a1, r);
+    const path = document.createElementNS(ns, "path");
+    path.setAttribute("d", "M0 0 L" + x0.toFixed(2) + " " + y0.toFixed(2) + " A" + r + " " + r + " 0 " + (a1 - a0 > 180 ? 1 : 0) + " 1 " + x1.toFixed(2) + " " + y1.toFixed(2) + " Z");
+    path.setAttribute("fill", subjectColour(subjectFor({ text: l.raw })) || SPIN_COLOURS[i % SPIN_COLOURS.length]);
+    path.setAttribute("stroke", "#fff");
+    path.setAttribute("stroke-width", "2");
+    svg.append(path);
+    const t = document.createElementNS(ns, "text");
+    const words = lineLabel(l.raw);
+    t.textContent = words.length > 16 ? words.slice(0, 15) + "…" : words;
+    t.setAttribute("transform", "rotate(" + (mid - 90).toFixed(2) + ") translate(" + (r * 0.56).toFixed(1) + " 0)");
+    t.setAttribute("text-anchor", "middle");
+    t.setAttribute("dominant-baseline", "middle");
+    t.setAttribute("class", "spin-label");
+    svg.append(t);
+  });
+  const hub = document.createElementNS(ns, "circle");
+  hub.setAttribute("r", "16"); hub.setAttribute("fill", "#fff");
+  svg.append(hub);
+  wrap.append(el("div", "spin-pointer"), svg);
+  box.append(wrap);
+  const result = el("div", "spin-result");
+  const go = button("Spin!", "spin-go", () => {
+    go.disabled = true;
+    result.replaceChildren();
+    const i = spinPick(n);
+    const to = spinTurn(i, n, spinWheel.at || 0, 5 + Math.floor(Math.random() * 3));
+    spinWheel.at = to;
+    const still = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    svg.style.transition = still ? "none" : "transform 3.4s cubic-bezier(.12,.68,.18,1)";
+    svg.style.transform = "rotate(" + to + "deg)";
+    setTimeout(() => landed(lines[i]), still ? 50 : 3500);
+  });
+  let mins = 5;
+  const landed = (l) => {
+    go.disabled = false;
+    go.textContent = "Spin again";
+    cheer();
+    result.append(el("p", "spin-got", lineLabel(l.raw)));
+    const row = el("div", "spin-mins");
+    row.append(el("span", "muted", "Spend at least"));
+    [5, 10, 15, 20, 30].forEach((m) => {
+      const c = button(m + " min", "smart-chip" + (m === mins ? " on" : ""), () => {
+        mins = m; row.querySelectorAll(".smart-chip").forEach((x) => x.classList.toggle("on", x === c));
+      });
+      row.append(c);
+    });
+    result.append(row);
+    const doIt = button("Do it", "spin-do", () => {
+      page.nowRaw = l.raw;
+      shut();
+      startDoing(day, l.raw, mins);
+      page.said = "The wheel says “" + lineLabel(l.raw) + "”. At least " + mins + " minutes on it: the timer's going.";
+      drawPage();
+    });
+    doIt.title = "Starts a " + mins + " minute timer on it; at the end the tutor asks if you finished";
+    result.append(doIt);
+  };
+  box.append(go, result);
+  pop.append(box);
+  document.body.append(pop);
 }
 
 function pageNotesCard(day, data) {
