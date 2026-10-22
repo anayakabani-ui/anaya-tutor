@@ -1148,3 +1148,10 @@ button.tg-insert-add { width: auto !important; margin: 0 0 0 auto !important; pa
 @media (prefers-color-scheme: dark) {
   .flow-step, .pop-flow-on { color: #5FD4C6; }
 }
+
+/* 2026-10-22b: the On it bar at the top of the Day page; her own minutes for the timer */
+.now-card .flow-bar { margin: 4px 0 10px; }
+.flow-bar.flow-idle { background: color-mix(in srgb, #2F8FE0 9%, var(--card)); border-left-color: #2F8FE0; }
+.flow-bar .now-dot { align-self: center; }
+input.doing-own { display: inline-block; width: 76px; margin: 0; padding: 6px 8px; font-size: 14px; }
+button.doing-own-go { width: auto; margin: 0; padding: 6px 12px; }
