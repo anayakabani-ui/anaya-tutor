@@ -2077,7 +2077,7 @@ function drawInfoCard(found) {
     if (menu.day === isoDay(new Date())) {        // 2026-10-23
       const k = carryNow(found);
       if (k && (k.lines.length || k.treats.moved.length))
-        item(carryWords(k.lines.length, k.treats.moved.length, k.c.from, k.today).button, "Everything not done comes to today (not the basics), and the treats not earned yet",
+        item(carryWords(k.lines.length, k.treats.moved.length, k.c.from, k.today, k.c.also).button, "Everything not done comes to today (not the basics), and the treats not earned yet",
           () => { state.calDayMenu = null; bringOver(null); });
     }
     card.append(list);
@@ -5691,7 +5691,7 @@ function carryNow(found) {
   const lines = c.lines.filter((x) => !(sent && (!sent.texts || sent.texts.includes(x))));
   const open = c.lines.map((raw) => ({ raw, subject: subjectFor({ text: raw }) || "" }));
   const t = treatsData();
-  const tr = treatsCarry(t.rules, t.got, c.from, today, c.done, open);
+  const tr = treatsCarry(t.rules, t.got, c.also.length ? c.also.concat([c.from]) : c.from, today, c.done, open);   // 2026-10-23d
   return { c, lines, treats: tr, today };
 }
 function bringOver(texts) {
@@ -5723,7 +5723,7 @@ function carryTreatsFromLaptop() {
   const k = carryNow(found);
   if (!k || !k.c.brought || !k.treats.moved.length) return;
   saveTreats({ rules: k.treats.rules.map((r) => ({ ...r })) });
-  page.said = k.treats.moved.length + (k.treats.moved.length === 1 ? " treat" : " treats") + " from " + carryWords(0, 0, k.c.from, k.today).day + " came over to today too.";
+  page.said = k.treats.moved.length + (k.treats.moved.length === 1 ? " treat" : " treats") + " from " + carryWords(0, 0, k.c.from, k.today, k.c.also).day + " came over to today too.";
   drawPage();
 }
 function carryBar(found) {
@@ -5732,7 +5732,7 @@ function carryBar(found) {
   const n = k.lines.length, m = k.treats.moved.length;
   if (!n && !m) return null;
   if (recall("tutor-carry-hide", "") === k.today + "|" + k.c.from) return null;
-  const words = carryWords(n, m, k.c.from, k.today);
+  const words = carryWords(n, m, k.c.from, k.today, k.c.also);
   const bar = el("div", "carry-bar");
   bar.append(el("span", "carry-what", "Still to do from " + words.day + ": " + [n ? n + (n === 1 ? " task" : " tasks") : "", m ? m + (m === 1 ? " treat" : " treats") : ""].filter(Boolean).join(", ") +
     ". Not the basics, not what's done."));
