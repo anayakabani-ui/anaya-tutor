@@ -1,6 +1,6 @@
 // Keeps the app shell on the device so it opens with no signal. The data
 // itself is kept offline by Firestore's own cache, not by this file.
-const CACHE = "tutor-shell-v86";
+const CACHE = "tutor-shell-v87";
 const SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./logic.js",
                "./firebase-config.js", "./manifest.webmanifest",
                "./icon-192.png", "./icon-512.png"];
