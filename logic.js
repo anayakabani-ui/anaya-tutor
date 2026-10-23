@@ -1542,7 +1542,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v86";   // 2026-10-23b: was v85 (23: was v84) (22b: was v82, 22: was v81)
+export const APP_VERSION = "v87";   // 2026-10-23d: was v86 (23b: was v85) (23: was v84) (22b: was v82, 22: was v81)
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -3072,20 +3072,27 @@ export function carryOf(found) {
   const c = found && found.carry;
   if (!c || typeof c !== "object" || !/^\d{4}-\d{2}-\d{2}$/.test(String(c.from || ""))) return null;
   const words = (xs) => (Array.isArray(xs) ? xs : []).map((t) => String(t || "").trim()).filter(Boolean);
-  return { from: String(c.from), lines: words(c.lines), done: words(c.done), brought: Boolean(c.brought) };
+  // 2026-10-23d: also: the days before "from" that came over to it on the
+  // laptop (Thursday, when Continue moved it to Friday while the cloud was
+  // shut). Their treats come too.
+  const also = words(c.also).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && d < String(c.from)).sort().slice(-3);
+  return { from: String(c.from), lines: words(c.lines), done: words(c.done), brought: Boolean(c.brought), also };
 }
 // Which of that day's treats come to today, and how they change. open:
 // [{raw, subject}] for that day's lines still to do. A treat already earned
 // that day (got[from]) stays where it was; so does one whose deal was met.
 // A number of tasks: only the ones still to do count. A set: only its tasks
 // not done yet (a subject set becomes the set of that subject's tasks left).
+// 2026-10-23d: from can be a list of days (Thursday and Friday).
 export function treatsCarry(rules, got, from, to, done, open) {
-  const had = new Set(Array.isArray(got && got[from]) ? got[from] : []);
+  const froms = new Set((Array.isArray(from) ? from : [from]).map(String));
+  const had = new Set();
+  froms.forEach((d) => (Array.isArray(got && got[d]) ? got[d] : []).forEach((id) => had.add(id)));
   const ticked = new Set((done || []).map((t) => String(t).trim().toLowerCase()));
   const left = (open || []).map((l) => ({ raw: String(l.raw || l.text || "").trim(), subject: String(l.subject || "") })).filter((l) => l.raw);
   const out = [], moved = [];
   treatRules(rules).forEach((r) => {
-    if (r.day !== from || had.has(r.id)) { out.push(r); return; }
+    if (!froms.has(r.day) || had.has(r.id)) { out.push(r); return; }
     let next = null;
     if (r.kind === "count") {
       const still = r.n - ticked.size;
@@ -3105,15 +3112,19 @@ export function treatsCarry(rules, got, from, to, done, open) {
   return { rules: out, moved };
 }
 // What the button says.
-export function carryWords(lines, treats, from, today) {
+export function carryWords(lines, treats, from, today, also) {
   const d = new Date(String(today).slice(0, 10) + "T12:00:00");
   d.setDate(d.getDate() - 1);
   const yest = isoDay(d) === from;
-  const day = yest ? "yesterday's" : (["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date(from + "T12:00:00").getDay()] + "'s");
+  const name = (x) => ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date(x + "T12:00:00").getDay()];
+  // 2026-10-23d: "Bring Thursday and yesterday's over"
+  const before = (Array.isArray(also) ? also : []).filter((x) => x < from).map(name);
+  const one = yest ? "yesterday" : name(from);
+  const day = (before.length ? before.join(", ") + " and " : "") + one + "'s";
   const bits = [];
   if (lines) bits.push(lines + (lines === 1 ? " task" : " tasks"));
   if (treats) bits.push(treats + (treats === 1 ? " treat" : " treats"));
-  return { button: "Bring " + day + " over (" + bits.join(", ") + ")", day: yest ? "yesterday" : day.slice(0, -2) };
+  return { button: "Bring " + day + " over (" + bits.join(", ") + ")", day: day.slice(0, -2) };
 }
 
 // ---- 2026-10-23: "the spinning wheel is a bit odd- you can also categorize it
