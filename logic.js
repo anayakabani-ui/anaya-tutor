@@ -202,6 +202,7 @@ export function reviewDue(asks, reflections, now) {
   const day = isoDay(now);
   const waiting = asks.filter((a) => {
     if (answered.has(String(a.id))) return false;
+    if (a.answered) return false;          // 2026-10-23: answered in the laptop's own box
     if ((a.day || String(a.at).slice(0, 10)) !== day) return false;
     const age = (now - new Date(a.at)) / 60000;
     return age >= 0 && age <= REVIEW_KEEP_MIN;
@@ -1391,7 +1392,8 @@ export function allDays(live) {
   // 2026-10-19d: her flexible days.
   const flex = new Set((Array.isArray(held.flex) ? held.flex : []).map(String).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)));
   return { today: String(held.today || ""), days, flex, bank: bank.filter((l) => !l.planned),
-           planned: bank.filter((l) => l.planned), goals, times, events, repeats, locks };
+           planned: bank.filter((l) => l.planned), goals, times, events, repeats, locks,
+           carry: held.carry && typeof held.carry === "object" ? held.carry : null };   // 2026-10-23: yesterday's, to bring over (carryOf reads it)
 }
 
 // ---- 2026-10-16: the times view. "HEAVILY reference google calender's
@@ -1540,7 +1542,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v84";   // 2026-10-22c: was v83 (22b: was v82, 22: was v81)
+export const APP_VERSION = "v86";   // 2026-10-23b: was v85 (23: was v84) (22b: was v82, 22: was v81)
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -3056,3 +3058,98 @@ export function spinTurn(index, count, from, turns) {
 }
 export const SPIN_COLOURS = ["#4C8DF6", "#14B8A6", "#3E9A4A", "#E86AA6", "#2F8FE0", "#5FD4C6", "#EE6E66", "#7BC67E"];
 export const SPIN_MOST = 12;
+
+
+// ---- 2026-10-23: "the ability to basically take EVERYTHING that was done
+// yesterday and move it to today. this means 1) not including the basics ofc
+// 2) tasks that are done dont get moved 3) lists ,rewards etc that have been
+// not redeemed yet are moved too a) rewards that have sme tasks completed will
+// be changed so only the uncompleted tasks will count for the reward".
+// The laptop sends "carry" in live/alldays: {from, lines (what would come),
+// done (ticked that day), brought}. The lines move on the laptop (carry_all);
+// the treats are the website's, moved here.
+export function carryOf(found) {
+  const c = found && found.carry;
+  if (!c || typeof c !== "object" || !/^\d{4}-\d{2}-\d{2}$/.test(String(c.from || ""))) return null;
+  const words = (xs) => (Array.isArray(xs) ? xs : []).map((t) => String(t || "").trim()).filter(Boolean);
+  return { from: String(c.from), lines: words(c.lines), done: words(c.done), brought: Boolean(c.brought) };
+}
+// Which of that day's treats come to today, and how they change. open:
+// [{raw, subject}] for that day's lines still to do. A treat already earned
+// that day (got[from]) stays where it was; so does one whose deal was met.
+// A number of tasks: only the ones still to do count. A set: only its tasks
+// not done yet (a subject set becomes the set of that subject's tasks left).
+export function treatsCarry(rules, got, from, to, done, open) {
+  const had = new Set(Array.isArray(got && got[from]) ? got[from] : []);
+  const ticked = new Set((done || []).map((t) => String(t).trim().toLowerCase()));
+  const left = (open || []).map((l) => ({ raw: String(l.raw || l.text || "").trim(), subject: String(l.subject || "") })).filter((l) => l.raw);
+  const out = [], moved = [];
+  treatRules(rules).forEach((r) => {
+    if (r.day !== from || had.has(r.id)) { out.push(r); return; }
+    let next = null;
+    if (r.kind === "count") {
+      const still = r.n - ticked.size;
+      if (still >= 1) next = { ...r, n: still };
+    } else if (r.kind === "set") {
+      const tasks = r.tasks.length ? r.tasks.filter((t) => !ticked.has(t.toLowerCase()))
+        : left.filter((l) => l.subject.toLowerCase() === r.subject.toLowerCase()).map((l) => l.raw);
+      if (tasks.length) next = { ...r, tasks: tasks.slice(0, 30), subject: "" };
+    } else if (!ticked.has(r.task.toLowerCase())) {
+      next = { ...r };
+    }
+    if (!next) { out.push(r); return; }
+    next.day = to;
+    out.push(next);
+    moved.push(next);
+  });
+  return { rules: out, moved };
+}
+// What the button says.
+export function carryWords(lines, treats, from, today) {
+  const d = new Date(String(today).slice(0, 10) + "T12:00:00");
+  d.setDate(d.getDate() - 1);
+  const yest = isoDay(d) === from;
+  const day = yest ? "yesterday's" : (["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date(from + "T12:00:00").getDay()] + "'s");
+  const bits = [];
+  if (lines) bits.push(lines + (lines === 1 ? " task" : " tasks"));
+  if (treats) bits.push(treats + (treats === 1 ? " treat" : " treats"));
+  return { button: "Bring " + day + " over (" + bits.join(", ") + ")", day: yest ? "yesterday" : day.slice(0, -2) };
+}
+
+// ---- 2026-10-23: "the spinning wheel is a bit odd- you can also categorize it
+// by subjects and then it has the other stuff". Slices by subject (biggest
+// first), then one "Other stuff" for tasks with no subject. Landing on a
+// subject spins again on just its tasks.
+export const SPIN_OTHER = "Other stuff";
+export function spinGroups(lines, subjectOf) {
+  const by = new Map();
+  const other = [];
+  (lines || []).forEach((l) => {
+    const s = String((subjectOf ? subjectOf(l) : "") || "").trim();
+    if (!s) { other.push(l); return; }
+    const key = s.toLowerCase();
+    if (!by.has(key)) by.set(key, { name: s, lines: [] });
+    by.get(key).lines.push(l);
+  });
+  const groups = [...by.values()].sort((a, b) => b.lines.length - a.lines.length || a.name.localeCompare(b.name));
+  if (other.length) groups.push({ name: SPIN_OTHER, lines: other, other: true });
+  return groups.slice(0, SPIN_MOST);
+}
+
+// ---- 2026-10-23: "on the rewards page, its not quite like how you can select
+// which task youre on- it should be, since it only currently shows half the
+// tasks". The treat pickers left out every "> bit" of a mini list (half her
+// lines on 22 Oct). Every open line, a bit named with its list.
+export function pickableLines(lines) {
+  let head = "";
+  const out = [];
+  (lines || []).forEach((l) => {
+    if (!l) return;
+    if (l.kind === "gap") { head = ""; return; }
+    if (l.kind === "head") { head = String(l.text || "").trim(); return; }
+    if (l.kind !== "line" || l.done || l.repeat) return;
+    const text = String(l.text || "").trim();
+    out.push({ raw: l.raw, line: l, label: l.sub && head ? head + ": " + text : text });
+  });
+  return out;
+}
