@@ -10,7 +10,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-         collection, doc, onSnapshot, addDoc, setDoc, deleteDoc, getDocs, query, orderBy }
+         collection, doc, onSnapshot, addDoc, setDoc, deleteDoc, getDocs, query, orderBy, where }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUntil, clock12, dayText, minutesText,
          sizeText, inDays, rankSubjects, youtubeToday, reflectionDue, reflectionTally,
@@ -46,7 +46,8 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          guessSubjectLoose, linkParts, pageGroups,
          BANK_DOCKS, bankWhere, bankWidth, stepsOf, stepsWords, stepsLeft, flowTasks, insertGap, insertMarks,   // 2026-10-21f
          roundDown5, flowExtend, flowAfterDone, flowSwitch, flowBreak, manyTimes,
-         spinPick, spinTurn, SPIN_COLOURS, SPIN_MOST } from "./logic.js";   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
+         spinPick, spinTurn, SPIN_COLOURS, SPIN_MOST,
+         carryOf, treatsCarry, carryWords, spinGroups, SPIN_OTHER, pickableLines } from "./logic.js";   // 2026-10-23   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
 
 const $ = (id) => document.getElementById(id);
 // 2026-10-18b: a line's subject, by its words, from the bank's subject lists.
@@ -165,6 +166,7 @@ async function sendEdit(edit) {
 // open in front of her, a stamp goes in meta/inbox every 30 seconds; the
 // laptop looks every few seconds for as long as the stamps keep coming.
 const SITE_BEAT_MS = 30000;
+const HISTORY_SITE_DAYS = 35;       // 2026-10-23: ticks read from the cloud, this many days back
 let siteBeatAt = 0;
 async function siteBeat() {
   if (!cloud || document.visibilityState !== "visible") return;
@@ -714,10 +716,13 @@ function pageTreatsCard(day) {
   // 2026-10-20k: the page's own day. Planning tomorrow shows tomorrow's
   // treats and tomorrow's tasks to pick from (it was always today's).
   const shown = treatsForDay(t.rules, day);
+  // 2026-10-23: a mini list's bit reads "my list: part a", not "> part a".
+  const named = new Map(pickableLines(pageLines(day)).map((l) => [l.raw, l.label]));
+  const treatLabel = (raw) => named.get(raw) || lineLabel(String(raw).replace(/^>\s*/, ""));
   if (t.rules.length && !shown.length) card.append(el("p", "muted", "No treats set for this day yet."));
   shown.forEach((r) => {
     const row = el("div", "treat-row" + (got.includes(r.id) ? " got" : ""));
-    row.append(el("span", "treat-words", treatWords(r, lineLabel) + ": " + r.reward),   // 2026-10-21: four kinds
+    row.append(el("span", "treat-words", treatWords(r, treatLabel) + ": " + r.reward),   // 2026-10-21: four kinds
                el("span", "treat-progress", got.includes(r.id) ? "Earned today" : day === today ? treatProgress(r, done, ctx) : ""));
     // 2026-10-21: a "while doing" treat starts its timer from here or the Now card.
     if (r.kind === "timer" && day === today && !got.includes(r.id) && !done.map((x) => x.toLowerCase()).includes(r.task.toLowerCase()))
@@ -730,12 +735,32 @@ function pageTreatsCard(day) {
   // 2026-10-21: "after I finish this set" and "while doing X".
   add.append(smartChips("Treat for", [["count", "A number of tasks"], ["task", "One task"], ["set", "A set"], ["timer", "While doing X"]], kind, (v) => { page.treatKind = v; drawPage(); }));
   const row = el("div", "page-inline");
-  const open = pageLines(day).filter((l) => l.kind === "line" && !l.done && !String(l.raw).startsWith(">"));   // 2026-10-20k: was pageLines(today)
+  // 2026-10-23: "its not quite like how you can select which task youre on-
+  // it should be, since it only currently shows half the tasks". Every open
+  // line (a mini list's "> bits" were left out), as chips in the subject's
+  // colour like Switch on the On it bar, not a drop down.
+  const open = pickableLines(pageLines(day));   // 2026-10-20k: was pageLines(today)
   const taskSelect = () => {
-    const sel = document.createElement("select");
-    sel.setAttribute("aria-label", "Which task");
-    open.forEach((l) => { const o = document.createElement("option"); o.value = l.raw; o.textContent = lineLabel(l.raw); sel.append(o); });
-    return sel;
+    if (!page.treatPick || page.treatPick.day !== day || !open.some((l) => l.raw === page.treatPick.raw))
+      page.treatPick = { day, raw: open.length ? (open.find((l) => !l.line.sub) || open[0]).raw : "" };
+    const pick = { value: page.treatPick.raw };
+    const chips = el("div", "treat-pick");
+    chips.setAttribute("role", "radiogroup");
+    chips.setAttribute("aria-label", "Which task");
+    open.forEach((l) => {
+      const on = l.raw === page.treatPick.raw;
+      const c = button(l.label, "now-chip treat-pick-chip" + (on ? " on" : ""), () => {
+        page.treatPick = { day, raw: l.raw }; pick.value = l.raw;
+        chips.querySelectorAll(".treat-pick-chip").forEach((x) => { x.classList.toggle("on", x === c); x.setAttribute("aria-checked", String(x === c)); });
+      });
+      c.setAttribute("role", "radio");
+      c.setAttribute("aria-checked", String(on));
+      applySubject(c, l.line);
+      chips.append(c);
+    });
+    if (!open.length) chips.append(el("p", "muted", "Nothing open on this day to pick."));
+    add.append(chips);
+    return pick;
   };
   let what = null;
   let mins = null;
@@ -762,11 +787,12 @@ function pageTreatsCard(day) {
       setBox = el("div", "treat-set");
       open.forEach((l) => {
         const on = page.treatSet.picked.includes(l.raw);
-        const chip = button(lineLabel(l.raw), "smart-chip treat-set-chip" + (on ? " on" : ""), () => {
+        const chip = button(l.label, "now-chip treat-set-chip" + (on ? " on" : ""), () => {   // 2026-10-23: every line, like Switch
           page.treatSet.picked = on ? page.treatSet.picked.filter((x) => x !== l.raw) : page.treatSet.picked.concat([l.raw]);
           drawPage();
         });
         chip.setAttribute("aria-pressed", String(on));
+        applySubject(chip, l.line);
         setBox.append(chip);
       });
       if (!open.length) setBox.append(el("p", "muted", "Nothing open on this day to pick."));
@@ -779,10 +805,10 @@ function pageTreatsCard(day) {
     mins.setAttribute("aria-label", "How long");
     mins.className = "treat-mins";
     DOING_MINUTES.forEach((m) => { const o = document.createElement("option"); o.value = String(m); o.textContent = m + " min"; if (m === 30) o.selected = true; mins.append(o); });
-    row.append(el("span", "muted", "While doing"), what, el("span", "muted", "for"), mins, el("span", "muted", ", if I finish it I get"));
+    row.append(el("span", "muted", "While doing the one picked above, for"), mins, el("span", "muted", ", if I finish it I get"));
   } else {
     what = taskSelect();
-    row.append(el("span", "muted", "When"), what, el("span", "muted", "is done, I get"));
+    row.append(el("span", "muted", "When the one picked above is done, I get"));
   }
   const reward = document.createElement("input");
   reward.placeholder = "a Zbar";
@@ -801,7 +827,7 @@ function pageTreatsCard(day) {
     else rule = { id: "t" + Date.now(), kind, task: what.value, reward: r, day };   // 2026-10-20k: for this page's day
     if ((kind === "task" || kind === "timer") && !rule.task) return;
     saveTreats({ rules: t.rules.concat([rule]) });
-    page.said = "Deal. " + treatWords(treatRules([rule])[0], lineLabel) + (kind === "count" ? " " + (day === today ? "today" : "that day") : "") + ", " + r + "." +
+    page.said = "Deal. " + treatWords(treatRules([rule])[0], treatLabel) + (kind === "count" ? " " + (day === today ? "today" : "that day") : "") + ", " + r + "." +
       (kind === "timer" ? (day === today ? " Press Start timer when you begin." : " Start its timer on the day.") : "");
     drawPage();
   };
@@ -2048,6 +2074,12 @@ function drawInfoCard(found) {
     item("+30: what's still to come, half an hour later", "Ctrl+Z puts them back", () => { state.calDayMenu = null; shiftDay(menu.day, 30); });
     item("+15: a quarter of an hour later", "Ctrl+Z puts them back", () => { state.calDayMenu = null; shiftDay(menu.day, 15); });
     if (menu.day === isoDay(new Date())) item("Hide today for 30 minutes", "It comes back by itself", () => { state.calDayMenu = null; hideToday(true); });   // 2026-10-21g
+    if (menu.day === isoDay(new Date())) {        // 2026-10-23
+      const k = carryNow(found);
+      if (k && (k.lines.length || k.treats.moved.length))
+        item(carryWords(k.lines.length, k.treats.moved.length, k.c.from, k.today).button, "Everything not done comes to today (not the basics), and the treats not earned yet",
+          () => { state.calDayMenu = null; bringOver(null); });
+    }
     card.append(list);
     document.body.append(card);
   }
@@ -5640,14 +5672,74 @@ async function smartApply(plan) {
 // the rest of today later when she's running over. Below, today in loose
 // blocks: morning, afternoon, evening, any time.
 function pageRollover(found, today) {
-  const last = recall("tutor-rolled", null);
-  if (last === today) return;
+  // 2026-10-23: this never moved anything. The laptop doesn't send days gone
+  // by, and a move off a day gone is refused (moveProblem, and the laptop's
+  // day_move), so "Morning. N from yesterday are on today now" wasn't true.
+  // Yesterday comes over with "Bring yesterday's over" now (carryBar).
   keep("tutor-rolled", today);
-  if (last === null) return;                // the first time ever: it starts from tomorrow, nothing moves today
-  const left = nowRollover(found, new Date(), locksNow(found));
-  if (!left.length) return;
-  left.forEach((l) => moveLine({ text: l.text, from: l.from }, today));
-  page.said = "Morning. " + left.length + " from yesterday " + (left.length === 1 ? "is" : "are") + " on today now.";
+}
+
+// ---- 2026-10-23: "take EVERYTHING that was done yesterday and move it to
+// today": not the basics, not what's done, lists and Do 1 from cards too, and
+// the treats not earned yet (a set or a number of tasks only counts what's
+// left). The laptop moves the lines (carry_all), the treats move here.
+function carryNow(found) {
+  const c = carryOf(found);
+  const today = isoDay(new Date());
+  if (!c || c.from >= today) return null;
+  const sent = state.carrySent && state.carrySent.from === c.from && Date.now() - state.carrySent.atMs < 120000 ? state.carrySent : null;
+  const lines = c.lines.filter((x) => !(sent && (!sent.texts || sent.texts.includes(x))));
+  const open = c.lines.map((raw) => ({ raw, subject: subjectFor({ text: raw }) || "" }));
+  const t = treatsData();
+  const tr = treatsCarry(t.rules, t.got, c.from, today, c.done, open);
+  return { c, lines, treats: tr, today };
+}
+function bringOver(texts) {
+  const found = allDays(state.alldays);
+  const k = carryNow(found);
+  if (!k) return;
+  const pick = texts ? k.lines.filter((x) => texts.includes(x)) : k.lines;
+  const moved = texts ? [] : k.treats.moved;
+  if (moved.length) saveTreats({ rules: k.treats.rules.map((r) => ({ ...r })) });
+  if (pick.length) {
+    const now = Date.now();
+    state.picksWaiting = state.picksWaiting.concat(pick.map((text) => ({ text, to: k.today, had: pickCount(found, k.today, text), atMs: now })));
+    state.carrySent = { from: k.c.from, atMs: now, texts: texts ? pick.slice() : null };
+    sendEdit({ kind: "carry_all", from: k.c.from, to: k.today, ...(texts ? { texts: pick } : {}) });
+  }
+  const bits = [];
+  if (pick.length) bits.push(pick.length + (pick.length === 1 ? " task" : " tasks"));
+  if (moved.length) bits.push(moved.length + (moved.length === 1 ? " treat" : " treats"));
+  page.said = bits.length ? bits.join(" and ") + " brought over to today. Done ones and the basics stayed behind." +
+    (moved.some((r) => r.kind !== "task" && r.kind !== "timer") ? " Treats only count what's left now." : "") +
+    (pick.length ? " The tasks show once the laptop has them." : "") : "Nothing to bring over.";
+  state.calSaid = page.said;
+  if (pick.length || moved.length) cheer();
+  drawPage(); drawCalendar();
+}
+// The laptop's own Continue brought the lines: the treats come too, once.
+function carryTreatsFromLaptop() {
+  const found = allDays(state.alldays);
+  const k = carryNow(found);
+  if (!k || !k.c.brought || !k.treats.moved.length) return;
+  saveTreats({ rules: k.treats.rules.map((r) => ({ ...r })) });
+  page.said = k.treats.moved.length + (k.treats.moved.length === 1 ? " treat" : " treats") + " from " + carryWords(0, 0, k.c.from, k.today).day + " came over to today too.";
+  drawPage();
+}
+function carryBar(found) {
+  const k = carryNow(found);
+  if (!k) return null;
+  const n = k.lines.length, m = k.treats.moved.length;
+  if (!n && !m) return null;
+  if (recall("tutor-carry-hide", "") === k.today + "|" + k.c.from) return null;
+  const words = carryWords(n, m, k.c.from, k.today);
+  const bar = el("div", "carry-bar");
+  bar.append(el("span", "carry-what", "Still to do from " + words.day + ": " + [n ? n + (n === 1 ? " task" : " tasks") : "", m ? m + (m === 1 ? " treat" : " treats") : ""].filter(Boolean).join(", ") +
+    ". Not the basics, not what's done."));
+  const go = button(words.button, "carry-go", () => bringOver(null));
+  go.title = "Everything not done (lists and Do 1 from cards too) comes to today, and the treats not earned yet";
+  bar.append(go, button("Not now", "quiet carry-later", () => { keep("tutor-carry-hide", k.today + "|" + k.c.from); drawPage(); }));
+  return bar;
 }
 
 // 2026-10-20f: a task dropped on a block goes after the last one there
@@ -5844,9 +5936,20 @@ function spinButton(day) {
   b.title = "Spin the wheel for a random task";
   return b;
 }
-function spinWheel(day) {
-  const lines = pageLines(day).filter((l) => l.kind === "line" && !l.done && !l.sub && !l.repeat && !deleting(day, l.raw)).slice(0, SPIN_MOST);
-  if (lines.length < 2) { page.said = "There need to be at least 2 tasks left to spin."; drawPage(); return; }
+function spinWheel(day, only) {
+  const all = pageLines(day).filter((l) => l.kind === "line" && !l.done && !l.sub && !l.repeat && !deleting(day, l.raw));
+  if (all.length < 2) { page.said = "There need to be at least 2 tasks left to spin."; drawPage(); return; }
+  // 2026-10-23: "you can also categorize it by subjects and then it has the
+  // other stuff". By subjects (the default): a slice for each subject and one
+  // for Other stuff; landing on one spins again on just its tasks.
+  const groups = spinGroups(all, (l) => subjectFor({ text: l.raw }));
+  let mode = only ? "tasks" : (recall("tutor-spin-mode", "subjects") === "tasks" ? "tasks" : "subjects");
+  const oneKind = !only && mode === "subjects" && groups.length < 2;
+  if (oneKind) mode = "tasks";
+  const pool = only ? only.lines : all;
+  const slices = mode === "subjects"
+    ? groups.map((g, i) => ({ label: g.name + " (" + g.lines.length + ")", colour: (!g.other && subjectColour(g.name)) || SPIN_COLOURS[i % SPIN_COLOURS.length], group: g }))
+    : pool.slice(0, SPIN_MOST).map((l, i) => ({ label: lineLabel(l.raw), colour: subjectColour(subjectFor({ text: l.raw })) || SPIN_COLOURS[i % SPIN_COLOURS.length], line: l }));
   document.querySelectorAll(".spin-pop").forEach((x) => x.remove());
   const pop = el("div", "spin-pop");
   pop.setAttribute("role", "dialog");
@@ -5857,28 +5960,41 @@ function spinWheel(day) {
   document.addEventListener("keydown", esc);
   pop.addEventListener("click", (e) => { if (e.target === pop) shut(); });
   const top = el("div", "spin-top");
-  top.append(el("p", "spin-title", "Spin for a task"), iconButton("close", "Close (Esc)", shut));
+  top.append(el("p", "spin-title", only ? "Spin: " + only.name : "Spin for a task"), iconButton("close", "Close (Esc)", shut));
   box.append(top);
+  if (only) {
+    box.append(button("Back to all of them", "quiet spin-back", () => { document.removeEventListener("keydown", esc); spinWheel(day); }));
+  } else {
+    const by = smartChips("Spin by", [["subjects", "Subjects"], ["tasks", "All tasks"]], oneKind ? "subjects" : mode, (v) => {
+      keep("tutor-spin-mode", v); document.removeEventListener("keydown", esc); spinWheel(day);
+    });
+    by.classList.add("spin-by");
+    box.append(by);
+    if (oneKind) box.append(el("p", "muted spin-note", "It's all one kind today, so the wheel's the tasks."));
+  }
   const ns = "http://www.w3.org/2000/svg";
   const wrap = el("div", "spin-wrap");
   const svg = document.createElementNS(ns, "svg");
   svg.setAttribute("viewBox", "-150 -150 300 300");
   svg.classList.add("spin-wheel");
-  const n = lines.length, r = 140;
+  svg.dataset.mode = mode;
+  const n = slices.length, r = 140;
   const pt = (deg, rad) => [rad * Math.sin(deg * Math.PI / 180), -rad * Math.cos(deg * Math.PI / 180)];
-  lines.forEach((l, i) => {
+  slices.forEach((sl, i) => {
     const a0 = i * 360 / n, a1 = (i + 1) * 360 / n, mid = (a0 + a1) / 2;
     const [x0, y0] = pt(a0, r), [x1, y1] = pt(a1, r);
     const path = document.createElementNS(ns, "path");
-    path.setAttribute("d", "M0 0 L" + x0.toFixed(2) + " " + y0.toFixed(2) + " A" + r + " " + r + " 0 " + (a1 - a0 > 180 ? 1 : 0) + " 1 " + x1.toFixed(2) + " " + y1.toFixed(2) + " Z");
-    path.setAttribute("fill", subjectColour(subjectFor({ text: l.raw })) || SPIN_COLOURS[i % SPIN_COLOURS.length]);
+    path.setAttribute("d", n === 1 ? "M0 -140 A140 140 0 1 1 -0.01 -140 Z"
+      : "M0 0 L" + x0.toFixed(2) + " " + y0.toFixed(2) + " A" + r + " " + r + " 0 " + (a1 - a0 > 180 ? 1 : 0) + " 1 " + x1.toFixed(2) + " " + y1.toFixed(2) + " Z");
+    path.setAttribute("fill", sl.colour);
     path.setAttribute("stroke", "#fff");
     path.setAttribute("stroke-width", "2");
     svg.append(path);
     const t = document.createElementNS(ns, "text");
-    const words = lineLabel(l.raw);
-    t.textContent = words.length > 16 ? words.slice(0, 15) + "…" : words;
-    t.setAttribute("transform", "rotate(" + (mid - 90).toFixed(2) + ") translate(" + (r * 0.56).toFixed(1) + " 0)");
+    t.textContent = sl.label.length > 16 ? sl.label.slice(0, 15) + "…" : sl.label;
+    // 2026-10-23: words on the left half were upside down; they're turned to read the right way up.
+    const flip = mid > 180 && mid < 360;
+    t.setAttribute("transform", "rotate(" + (flip ? mid + 90 : mid - 90).toFixed(2) + ") translate(" + (flip ? -r * 0.56 : r * 0.56).toFixed(1) + " 0)");
     t.setAttribute("text-anchor", "middle");
     t.setAttribute("dominant-baseline", "middle");
     t.setAttribute("class", "spin-label");
@@ -5899,13 +6015,33 @@ function spinWheel(day) {
     const still = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     svg.style.transition = still ? "none" : "transform 3.4s cubic-bezier(.12,.68,.18,1)";
     svg.style.transform = "rotate(" + to + "deg)";
-    setTimeout(() => landed(lines[i]), still ? 50 : 3500);
+    setTimeout(() => (slices[i].group ? landedGroup(slices[i].group) : landed(slices[i].line)), still ? 50 : 3500);
   });
   let mins = 5;
-  const landed = (l) => {
+  const landedGroup = (g) => {
+    if (g.lines.length === 1) { landed(g.lines[0], g.name); return; }
     go.disabled = false;
     go.textContent = "Spin again";
     cheer();
+    result.append(el("p", "spin-got", g.name));
+    result.append(el("p", "muted spin-sub", g.lines.length + " to pick from. Spin for one, or just pick it."));
+    const row = el("div", "spin-choices");
+    g.lines.forEach((l) => {
+      const c = button(lineLabel(l.raw), "now-chip spin-choice", () => { result.replaceChildren(); landed(l, g.name); });
+      applySubject(c, l);
+      row.append(c);
+    });
+    result.append(row);
+    result.append(button("Spin " + (g.other ? "the other stuff" : g.name + " tasks"), "spin-again-in", () => {
+      document.removeEventListener("keydown", esc);
+      spinWheel(day, { name: g.other ? "the other stuff" : g.name, lines: g.lines });
+    }));
+  };
+  const landed = (l, from) => {
+    go.disabled = false;
+    go.textContent = "Spin again";
+    cheer();
+    if (from) result.append(el("p", "muted spin-sub", from));
     result.append(el("p", "spin-got", lineLabel(l.raw)));
     const row = el("div", "spin-mins");
     row.append(el("span", "muted", "Spend at least"));
@@ -5955,7 +6091,12 @@ function pageCarryCard(day, lines, data) {
   const today = isoDay(new Date());
   const evening = new Date().getHours() >= 18;
   if (!(day < today || (day === today && evening))) return null;
-  const left = carryList(lines, data.urgent);
+  // 2026-10-23: a day gone by is the laptop's "carry" (it never sends days
+  // gone, and a move off one was refused), brought over with carry_all.
+  const k = day < today ? carryNow(allDays(state.alldays)) : null;
+  const past = Boolean(k && k.c.from === day);
+  if (day < today && !past) return null;
+  const left = carryList(past ? k.lines.map((raw) => ({ kind: "line", raw, text: raw.replace(/^>\s*/, ""), done: false })) : lines, data.urgent);
   const card = el("div", "page-card page-carry");
   card.append(el("span", "page-label", "Carry over"));
   if (!left.length) { card.append(el("p", "muted", "Nothing left. Everything got done.")); return card; }
@@ -5972,10 +6113,11 @@ function pageCarryCard(day, lines, data) {
     hot.setAttribute("aria-pressed", String(line.urgent));
     hot.setAttribute("aria-label", "Urgent");
     item.append(hot, el("span", "page-task-name", lineLabel(line.text)),
-      button("To " + where, "quiet", () => { moveLine({ text: line.raw, from: day }, next); drawPage(); }));
+      button("To " + where, "quiet", () => { if (past) { bringOver([line.raw]); return; } moveLine({ text: line.raw, from: day }, next); drawPage(); }));
     card.append(item);
   });
   card.append(button("Move them all to " + where, "", () => {
+    if (past) { bringOver(null); return; }      // 2026-10-23: and its treats
     left.forEach((line) => moveLine({ text: line.raw, from: day }, next));
     page.said = left.length + " moved to " + where + ", urgent ones first.";
     drawPage();
@@ -6042,6 +6184,7 @@ function drawPage() {
     box.append(button("Plan tomorrow", "page-plan-go", () => { page.day = tomorrow; drawPage(); }));
   }
   if (page.said) box.append(el("p", "page-said", page.said));
+  if (day === today) { const cb = carryBar(found); if (cb) box.append(cb); }   // 2026-10-23
   if (day === today) { pageRollover(found, today); box.append(pageNowCard(day, lines, times, found)); }   // 2026-10-20d
   const top = el("div", "page-top");
   top.append(pageStarCard(day, lines, data), pageTrackCard(day, data));
@@ -6416,7 +6559,13 @@ function start() {
       state.bank = snap.exists() ? snap.data() : null;
       drawRewards();
     }));
-    listen("task_history", "history");
+    // 2026-10-23: the cloud started turning the laptop away ("429 Too Many
+    // Requests"). Every window opened read all of her ticks back to 120 days
+    // (over 1100 of them). The site only ever shows the last few weeks.
+    stops.push(onSnapshot(query(collection(db, base + "task_history"), where("day", ">=", addDayIso(isoDay(new Date()), -HISTORY_SITE_DAYS))), (snap) => {
+      state.history = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      drawAll();
+    }, () => { $("status").textContent = "Can't reach the cloud right now"; }));
     listen("task_snapshots", "snapshots");
     listen("calendar_writes", "writes");
     stops.push(onSnapshot(doc(db, base + "live/focus"), (snap) => {
@@ -6439,12 +6588,14 @@ function start() {
       state.alldays = snap.exists() ? snap.data() : null;
       drawTasks(); drawCalendarSoft(); drawPage();
       try { treatsFromLaptop(); } catch (error) { /* never stops the page */ }   // 2026-10-21
+      try { carryTreatsFromLaptop(); } catch (error) { /* never stops the page */ }   // 2026-10-23
     }));
     stops.push(onSnapshot(collection(db, base + "pages"), (snap) => {   // 2026-10-19i
       const pages = {};
       snap.docs.forEach((d) => { pages[d.id] = d.data(); });
       state.pages = pages;
       drawPage(); drawToday();
+      try { carryTreatsFromLaptop(); } catch (error) { /* never stops the page */ }   // 2026-10-23: the treats may come after the days
     }));
     stops.push(onSnapshot(doc(db, base + "live/notes"), (snap) => {
       state.notes = snap.exists() ? snap.data() : null;
