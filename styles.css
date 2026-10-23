@@ -1173,3 +1173,23 @@ button.spin-go { width: auto; margin: 0; padding: 10px 34px; font-size: 17px; ba
 .spin-mins .smart-chip { background: var(--soft); }
 button.spin-do { width: auto; margin: 0; padding: 9px 26px; }
 @media (prefers-color-scheme: dark) { .spin-pointer { border-top-color: #5AA9E0; } }
+
+/* 2026-10-23: Bring yesterday's over (Day page, today) */
+.carry-bar { margin: 8px 0; padding: 10px 14px; border-radius: var(--r-card); background: color-mix(in srgb, #E86AA6 10%, var(--card)); border-left: 4px solid #E86AA6; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.carry-what { flex: 1 1 260px; color: var(--text); }
+.carry-bar button { width: auto !important; margin: 0 !important; }
+button.carry-go { background: #E86AA6; color: #fff; }
+button.carry-go:hover { background: color-mix(in srgb, #E86AA6 86%, black); }
+/* 2026-10-23: treats pick a task like Switch does: chips, every line */
+.treat-pick { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; max-height: 220px; overflow: auto; }
+.treat-pick .now-chip, .treat-set .now-chip { width: auto; }
+.treat-set .now-chip[aria-pressed="true"] { outline: 2px solid var(--accent); }
+/* 2026-10-23: the wheel by subjects */
+.spin-by { justify-content: center; }
+.spin-note, .spin-sub { margin: 0; text-align: center; }
+.spin-choices { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+.spin-choices .now-chip { width: auto; }
+button.spin-again-in, button.spin-back { width: auto; margin: 0; }
+button.spin-again-in { background: #14B8A6; }
+.treat-pick .now-chip, .treat-set .now-chip { background: var(--soft); }
+.treat-pick .now-chip.on, .treat-set .now-chip.on { background: var(--accent-soft); }
