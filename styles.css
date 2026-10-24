@@ -1191,7 +1191,8 @@ button.carry-go:hover { background: color-mix(in srgb, #E86AA6 86%, black); }
 .spin-choices .now-chip { width: auto; }
 button.spin-again-in, button.spin-back { width: auto; margin: 0; }
 button.spin-again-in { background: #14B8A6; }
-.spin-ways { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }   /* 2026-10-24 */
-button.spin-by-subjects { background: #1F6391; }
+.spin-from { justify-content: center; flex-wrap: wrap; }   /* 2026-10-24b: spin only from one column */
+.spin-from .smart-chip[data-from]:not([data-from="all"]) { box-shadow: inset 3px 0 0 var(--from); }
+.spin-from .smart-chip.on[data-from]:not([data-from="all"]) { background: var(--from); color: #fff; }
 .treat-pick .now-chip, .treat-set .now-chip { background: var(--soft); }
 .treat-pick .now-chip.on, .treat-set .now-chip.on { background: var(--accent-soft); }
