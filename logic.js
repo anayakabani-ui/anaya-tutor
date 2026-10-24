@@ -1542,7 +1542,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v87";   // 2026-10-23d: was v86 (23b: was v85) (23: was v84) (22b: was v82, 22: was v81)
+export const APP_VERSION = "v88";   // 2026-10-24: was v87 (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81)
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -3145,6 +3145,20 @@ export function spinGroups(lines, subjectOf) {
   const groups = [...by.values()].sort((a, b) => b.lines.length - a.lines.length || a.name.localeCompare(b.name));
   if (other.length) groups.push({ name: SPIN_OTHER, lines: other, other: true });
   return groups.slice(0, SPIN_MOST);
+}
+
+// ---- 2026-10-24: "if i have sorted them into these groups ... i would like
+// the option to also spin by groups as a toggle for most important at the
+// top, that can still be divided into subjects and tasks". A slice for each of
+// her four columns that has something in it, most important first (Have to do
+// starts at the top of the wheel), in her site's blues, teals, greens, pinks.
+export const SPIN_PRIO_ORDER = ["have", "want", "should", "ideally"];
+export const SPIN_PRIO_COLOURS = { have: "#1F6391", want: "#14B8A6", should: "#3E9A4A", ideally: "#E86AA6" };
+export function spinPrioGroups(lines, prio) {
+  const names = Object.fromEntries(NOW_PRIOS);
+  return SPIN_PRIO_ORDER.map((key) => ({ name: names[key], key, prio: true,
+    lines: (lines || []).filter((l) => l && nowPrioOf(l.raw, prio) === key) }))
+    .filter((g) => g.lines.length);
 }
 
 // ---- 2026-10-23: "on the rewards page, its not quite like how you can select
