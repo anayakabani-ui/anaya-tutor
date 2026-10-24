@@ -5943,22 +5943,23 @@ function spinWheel(day, only) {
   // 2026-10-23: "you can also categorize it by subjects and then it has the
   // other stuff". By subjects (the default): a slice for each subject and one
   // for Other stuff; landing on one spins again on just its tasks.
-  // 2026-10-24: "spin by groups ... most important at the top, that can still
-  // be divided into subjects and tasks". Groups: a slice for each of her four
-  // columns (Have to do first, at the top); landing on one shows its tasks,
-  // and it can spin again on that column by subjects or by tasks.
-  // only.by "subjects": a column's own subjects wheel.
-  const pool = only ? only.lines : all;
+  // 2026-10-24b: "no i meant BY groups- not which group! so it would do
+  // things that are only within eg 'have to do' so that way it doesnt make me
+  // do something thats for fun or due later instead". "Spin from": one of her
+  // four columns (most important first) or Everything; the wheel only has
+  // what's in that column, still by Subjects or All tasks. Kept in
+  // localStorage "tutor-spin-from". (24's Groups wheel, a slice per column, is gone.)
+  const prios = spinPrioGroups(all, (state.pages[day] && state.pages[day].prio) || {});
+  const fromSaved = recall("tutor-spin-from", "all");
+  const fromGroup = prios.find((g) => g.key === fromSaved) || null;
+  const fromKey = fromGroup ? fromGroup.key : "all";
+  const pool = only ? only.lines : (fromGroup ? fromGroup.lines : all);
   const groups = spinGroups(pool, (l) => subjectFor({ text: l.raw }));
-  const prios = only ? [] : spinPrioGroups(all, (state.pages[day] && state.pages[day].prio) || {});
-  const saved = recall("tutor-spin-mode", "subjects");
-  const asked = only ? (only.by === "subjects" ? "subjects" : "tasks") : (["groups", "subjects", "tasks"].includes(saved) ? saved : "subjects");
+  const asked = only ? "tasks" : (recall("tutor-spin-mode", "subjects") === "tasks" ? "tasks" : "subjects");
   let mode = asked, note = "";
-  if (mode === "groups" && prios.length < 2) { mode = "subjects"; if (prios.length) note = "Everything's in " + prios[0].name + " today, so the wheel's the subjects."; }
-  if (mode === "subjects" && groups.length < 2) { mode = "tasks"; note = note ? note.replace("the subjects", "the tasks") : "It's all one kind today, so the wheel's the tasks."; }
-  const slices = mode === "groups"
-    ? prios.map((g) => ({ label: g.name + " (" + g.lines.length + ")", colour: SPIN_PRIO_COLOURS[g.key], group: g }))
-    : mode === "subjects"
+  if (!only && fromSaved !== "all" && !fromGroup) note = "Nothing left in " + (Object.fromEntries(NOW_PRIOS)[fromSaved] || "that one") + ", so it's everything.";
+  if (mode === "subjects" && groups.length < 2) { mode = "tasks"; if (!note) note = fromGroup ? "It's all one kind in " + fromGroup.name + ", so the wheel's its tasks." : "It's all one kind today, so the wheel's the tasks."; }
+  const slices = mode === "subjects"
     ? groups.map((g, i) => ({ label: g.name + " (" + g.lines.length + ")", colour: (!g.other && subjectColour(g.name)) || SPIN_COLOURS[i % SPIN_COLOURS.length], group: g }))
     : pool.slice(0, SPIN_MOST).map((l, i) => ({ label: lineLabel(l.raw), colour: subjectColour(subjectFor({ text: l.raw })) || SPIN_COLOURS[i % SPIN_COLOURS.length], line: l }));
   document.querySelectorAll(".spin-pop").forEach((x) => x.remove());
@@ -5971,16 +5972,23 @@ function spinWheel(day, only) {
   document.addEventListener("keydown", esc);
   pop.addEventListener("click", (e) => { if (e.target === pop) shut(); });
   const top = el("div", "spin-top");
-  top.append(el("p", "spin-title", only ? "Spin: " + only.name : "Spin for a task"), iconButton("close", "Close (Esc)", shut));
+  top.append(el("p", "spin-title", only ? "Spin: " + only.name : fromGroup ? "Spin: " + fromGroup.name : "Spin for a task"), iconButton("close", "Close (Esc)", shut));
   box.append(top);
   if (only) {
     box.append(button("Back to all of them", "quiet spin-back", () => { document.removeEventListener("keydown", esc); spinWheel(day); }));
   } else {
-    const by = smartChips("Spin by", [["groups", "Groups"], ["subjects", "Subjects"], ["tasks", "All tasks"]], asked, (v) => {
+    // 2026-10-24b: which column to spin from, most important first.
+    const fromRow = smartChips("Spin from", prios.map((g) => [g.key, g.name + " (" + g.lines.length + ")"]).concat([["all", "Everything (" + all.length + ")"]]), fromKey, (v) => {
+      keep("tutor-spin-from", v); document.removeEventListener("keydown", esc); spinWheel(day);
+    });
+    fromRow.classList.add("spin-from");
+    fromRow.title = "Only spin what's in one of your columns, so it won't pick something for fun or due later";
+    fromRow.querySelectorAll(".smart-chip").forEach((c, i) => { const g = prios[i]; if (g) { c.dataset.from = g.key; c.style.setProperty("--from", SPIN_PRIO_COLOURS[g.key]); } else c.dataset.from = "all"; });
+    box.append(fromRow);
+    const by = smartChips("Spin by", [["subjects", "Subjects"], ["tasks", "All tasks"]], asked, (v) => {
       keep("tutor-spin-mode", v); document.removeEventListener("keydown", esc); spinWheel(day);
     });
     by.classList.add("spin-by");
-    by.title = "Groups: Have to do, Want to do, Should try to do, Ideally (most important at the top)";
     box.append(by);
   }
   if (note) box.append(el("p", "muted spin-note", note));
@@ -5991,8 +5999,7 @@ function spinWheel(day, only) {
   svg.classList.add("spin-wheel");
   svg.dataset.mode = mode;
   const n = slices.length, r = 140;
-  // 2026-10-24: by groups, the wheel opens with Have to do right under the pointer (most important at the top).
-  if (mode === "groups") { spinWheel.at = 360 - 180 / n; svg.style.transform = "rotate(" + spinWheel.at + "deg)"; }
+
   const pt = (deg, rad) => [rad * Math.sin(deg * Math.PI / 180), -rad * Math.cos(deg * Math.PI / 180)];
   slices.forEach((sl, i) => {
     const a0 = i * 360 / n, a1 = (i + 1) * 360 / n, mid = (a0 + a1) / 2;
@@ -6047,23 +6054,7 @@ function spinWheel(day, only) {
     });
     result.append(row);
     const named = g.other ? "the other stuff" : g.name;
-    const inside = only && only.by === "subjects" ? only.name + ": " + named : named;
-    if (g.prio) {
-      // 2026-10-24: a column, then spin it again by its subjects or its tasks.
-      const ways = el("div", "spin-ways");
-      if (spinGroups(g.lines, (x) => subjectFor({ text: x.raw })).length >= 2) {
-        ways.append(button("Spin " + g.name + " by subjects", "spin-again-in spin-by-subjects", () => {
-          document.removeEventListener("keydown", esc);
-          spinWheel(day, { name: g.name, lines: g.lines, by: "subjects" });
-        }));
-      }
-      ways.append(button("Spin " + g.name + " tasks", "spin-again-in spin-by-tasks", () => {
-        document.removeEventListener("keydown", esc);
-        spinWheel(day, { name: g.name, lines: g.lines });
-      }));
-      result.append(ways);
-      return;
-    }
+    const inside = fromGroup ? fromGroup.name + ": " + named : named;   // 2026-10-24b
     result.append(button("Spin " + (g.other ? "the other stuff" : g.name + " tasks"), "spin-again-in", () => {
       document.removeEventListener("keydown", esc);
       spinWheel(day, { name: inside, lines: g.lines });
