@@ -47,7 +47,8 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          BANK_DOCKS, bankWhere, bankWidth, stepsOf, stepsWords, stepsLeft, flowTasks, insertGap, insertMarks,   // 2026-10-21f
          roundDown5, flowExtend, flowAfterDone, flowSwitch, flowBreak, manyTimes,
          spinPick, spinTurn, SPIN_COLOURS, SPIN_MOST,
-         carryOf, treatsCarry, carryWords, spinGroups, SPIN_OTHER, pickableLines } from "./logic.js";   // 2026-10-23   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
+         carryOf, treatsCarry, carryWords, spinGroups, SPIN_OTHER, pickableLines,
+         spinPrioGroups, SPIN_PRIO_COLOURS } from "./logic.js";   // 2026-10-23   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
 
 const $ = (id) => document.getElementById(id);
 // 2026-10-18b: a line's subject, by its words, from the bank's subject lists.
@@ -5942,12 +5943,22 @@ function spinWheel(day, only) {
   // 2026-10-23: "you can also categorize it by subjects and then it has the
   // other stuff". By subjects (the default): a slice for each subject and one
   // for Other stuff; landing on one spins again on just its tasks.
-  const groups = spinGroups(all, (l) => subjectFor({ text: l.raw }));
-  let mode = only ? "tasks" : (recall("tutor-spin-mode", "subjects") === "tasks" ? "tasks" : "subjects");
-  const oneKind = !only && mode === "subjects" && groups.length < 2;
-  if (oneKind) mode = "tasks";
+  // 2026-10-24: "spin by groups ... most important at the top, that can still
+  // be divided into subjects and tasks". Groups: a slice for each of her four
+  // columns (Have to do first, at the top); landing on one shows its tasks,
+  // and it can spin again on that column by subjects or by tasks.
+  // only.by "subjects": a column's own subjects wheel.
   const pool = only ? only.lines : all;
-  const slices = mode === "subjects"
+  const groups = spinGroups(pool, (l) => subjectFor({ text: l.raw }));
+  const prios = only ? [] : spinPrioGroups(all, (state.pages[day] && state.pages[day].prio) || {});
+  const saved = recall("tutor-spin-mode", "subjects");
+  const asked = only ? (only.by === "subjects" ? "subjects" : "tasks") : (["groups", "subjects", "tasks"].includes(saved) ? saved : "subjects");
+  let mode = asked, note = "";
+  if (mode === "groups" && prios.length < 2) { mode = "subjects"; if (prios.length) note = "Everything's in " + prios[0].name + " today, so the wheel's the subjects."; }
+  if (mode === "subjects" && groups.length < 2) { mode = "tasks"; note = note ? note.replace("the subjects", "the tasks") : "It's all one kind today, so the wheel's the tasks."; }
+  const slices = mode === "groups"
+    ? prios.map((g) => ({ label: g.name + " (" + g.lines.length + ")", colour: SPIN_PRIO_COLOURS[g.key], group: g }))
+    : mode === "subjects"
     ? groups.map((g, i) => ({ label: g.name + " (" + g.lines.length + ")", colour: (!g.other && subjectColour(g.name)) || SPIN_COLOURS[i % SPIN_COLOURS.length], group: g }))
     : pool.slice(0, SPIN_MOST).map((l, i) => ({ label: lineLabel(l.raw), colour: subjectColour(subjectFor({ text: l.raw })) || SPIN_COLOURS[i % SPIN_COLOURS.length], line: l }));
   document.querySelectorAll(".spin-pop").forEach((x) => x.remove());
@@ -5965,13 +5976,14 @@ function spinWheel(day, only) {
   if (only) {
     box.append(button("Back to all of them", "quiet spin-back", () => { document.removeEventListener("keydown", esc); spinWheel(day); }));
   } else {
-    const by = smartChips("Spin by", [["subjects", "Subjects"], ["tasks", "All tasks"]], oneKind ? "subjects" : mode, (v) => {
+    const by = smartChips("Spin by", [["groups", "Groups"], ["subjects", "Subjects"], ["tasks", "All tasks"]], asked, (v) => {
       keep("tutor-spin-mode", v); document.removeEventListener("keydown", esc); spinWheel(day);
     });
     by.classList.add("spin-by");
+    by.title = "Groups: Have to do, Want to do, Should try to do, Ideally (most important at the top)";
     box.append(by);
-    if (oneKind) box.append(el("p", "muted spin-note", "It's all one kind today, so the wheel's the tasks."));
   }
+  if (note) box.append(el("p", "muted spin-note", note));
   const ns = "http://www.w3.org/2000/svg";
   const wrap = el("div", "spin-wrap");
   const svg = document.createElementNS(ns, "svg");
@@ -5979,6 +5991,8 @@ function spinWheel(day, only) {
   svg.classList.add("spin-wheel");
   svg.dataset.mode = mode;
   const n = slices.length, r = 140;
+  // 2026-10-24: by groups, the wheel opens with Have to do right under the pointer (most important at the top).
+  if (mode === "groups") { spinWheel.at = 360 - 180 / n; svg.style.transform = "rotate(" + spinWheel.at + "deg)"; }
   const pt = (deg, rad) => [rad * Math.sin(deg * Math.PI / 180), -rad * Math.cos(deg * Math.PI / 180)];
   slices.forEach((sl, i) => {
     const a0 = i * 360 / n, a1 = (i + 1) * 360 / n, mid = (a0 + a1) / 2;
@@ -6032,9 +6046,27 @@ function spinWheel(day, only) {
       row.append(c);
     });
     result.append(row);
+    const named = g.other ? "the other stuff" : g.name;
+    const inside = only && only.by === "subjects" ? only.name + ": " + named : named;
+    if (g.prio) {
+      // 2026-10-24: a column, then spin it again by its subjects or its tasks.
+      const ways = el("div", "spin-ways");
+      if (spinGroups(g.lines, (x) => subjectFor({ text: x.raw })).length >= 2) {
+        ways.append(button("Spin " + g.name + " by subjects", "spin-again-in spin-by-subjects", () => {
+          document.removeEventListener("keydown", esc);
+          spinWheel(day, { name: g.name, lines: g.lines, by: "subjects" });
+        }));
+      }
+      ways.append(button("Spin " + g.name + " tasks", "spin-again-in spin-by-tasks", () => {
+        document.removeEventListener("keydown", esc);
+        spinWheel(day, { name: g.name, lines: g.lines });
+      }));
+      result.append(ways);
+      return;
+    }
     result.append(button("Spin " + (g.other ? "the other stuff" : g.name + " tasks"), "spin-again-in", () => {
       document.removeEventListener("keydown", esc);
-      spinWheel(day, { name: g.other ? "the other stuff" : g.name, lines: g.lines });
+      spinWheel(day, { name: inside, lines: g.lines });
     }));
   };
   const landed = (l, from) => {
