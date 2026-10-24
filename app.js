@@ -48,7 +48,7 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          roundDown5, flowExtend, flowAfterDone, flowSwitch, flowBreak, manyTimes,
          spinPick, spinTurn, SPIN_COLOURS, SPIN_MOST,
          carryOf, treatsCarry, carryWords, spinGroups, SPIN_OTHER, pickableLines,
-         spinPrioGroups, SPIN_PRIO_COLOURS } from "./logic.js";   // 2026-10-23   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
+         spinPrioGroups, SPIN_PRIO_COLOURS, sortOf, sortPrio } from "./logic.js";   // 2026-10-23   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
 
 const $ = (id) => document.getElementById(id);
 // 2026-10-18b: a line's subject, by its words, from the bank's subject lists.
@@ -4671,7 +4671,9 @@ function drawSync() {
   $("status").textContent = state.meta && state.meta.last_sync
     ? "Laptop last synced " + clock12(state.meta.last_sync)
     : "Waiting for the laptop";
-  $("sync-status").textContent = syncStatus(state.asked, state.meta, Date.now());
+  $("sync-status").textContent = cloudGuard.full   // 2026-10-24d
+    ? "The cloud's free limit is used up for today, so this page has stopped asking it (asking again and again was using it up). It looks again every 20 minutes. Everything's still on your laptop."
+    : syncStatus(state.asked, state.meta, Date.now());
   // 2026-10-17b: which website this is.
   if ($("site-version")) $("site-version").textContent = "Website " + APP_VERSION;
 }
@@ -5719,6 +5721,22 @@ function bringOver(texts) {
   drawPage(); drawCalendar();
 }
 // The laptop's own Continue brought the lines: the treats come too, once.
+// 2026-10-24e: the laptop's Sort into groups, put in today's columns once.
+// Waits for the pages to be in, so it knows if it's been done (sortAt).
+function sortFromLaptop() {
+  if (!cloud || !state.pagesIn) return;
+  const today = isoDay(new Date());
+  const s = sortOf(allDays(state.alldays), today);
+  const mine = state.pages[today] || {};
+  if (!s || mine.sortAt === s.at || sortFromLaptop.done === s.at) return;
+  sortFromLaptop.done = s.at;
+  const r = sortPrio(s, pageLines(today), mine.prio);
+  state.pages[today] = { ...mine, prio: r.prio, sortAt: s.at };
+  setDoc(doc(cloud.db, cloud.base + "pages/" + today), { prio: r.prio, sortAt: s.at }, { merge: true }).catch(() => {});
+  page.said = "The tutor sorted today into your four groups" + (r.moved ? " (" + r.moved + " moved)" : "") + ". Drag any you'd put somewhere else.";
+  drawPage();
+}
+
 function carryTreatsFromLaptop() {
   const found = allDays(state.alldays);
   const k = carryNow(found);
@@ -6543,12 +6561,27 @@ function start() {
     stops.forEach((stop) => stop());
     stops = [];
     cloud = null;
+    cloudGuard.user = null; cloudGuard.on = false; cloudGuard.full = false;   // 2026-10-24d
     show("signin", !user);
     show("app", Boolean(user));
     if (!user) return;
     const base = "users/" + user.uid + "/";
     cloud = { db, base };
     siteBeat();                           // 2026-10-18e
+    // 2026-10-24d: her Firebase usage on Sat 24 Oct: 284K reads in a day,
+    // 145K in one hour and 112K the next, while the cloud was already
+    // saying 429 (its free 50K a day used up) and only 577 writes. With the
+    // limit gone, the page's 30 listeners keep trying again and again, and
+    // every try asks for all of their documents. Now a cheap look at one
+    // document first (cloudProbe): when the cloud says it's full, every
+    // listener is stopped and nothing is asked till it looks again 20
+    // minutes later. One read every 5 minutes otherwise.
+    cloudGuard.user = user;
+    cloudGuard.attach = () => attachAll(base);
+    cloudGuard.detach = () => { stops.forEach((stop) => stop()); stops = []; };
+    cloudCheck(true);
+  });
+  function attachAll(base) {
     const listen = (name, key) => stops.push(onSnapshot(collection(db, base + name), (snap) => {
       state[key] = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       drawAll();
@@ -6612,6 +6645,7 @@ function start() {
       drawTasks(); drawCalendarSoft(); drawPage();
       try { treatsFromLaptop(); } catch (error) { /* never stops the page */ }   // 2026-10-21
       try { carryTreatsFromLaptop(); } catch (error) { /* never stops the page */ }   // 2026-10-23
+      try { sortFromLaptop(); } catch (error) { /* never stops the page */ }   // 2026-10-24e
     }));
     stops.push(onSnapshot(collection(db, base + "pages"), (snap) => {   // 2026-10-19i
       const pages = {};
@@ -6619,6 +6653,8 @@ function start() {
       state.pages = pages;
       drawPage(); drawToday();
       try { carryTreatsFromLaptop(); } catch (error) { /* never stops the page */ }   // 2026-10-23: the treats may come after the days
+      state.pagesIn = true;                 // 2026-10-24e
+      try { sortFromLaptop(); } catch (error) { /* never stops the page */ }   // 2026-10-24e
     }));
     stops.push(onSnapshot(doc(db, base + "live/notes"), (snap) => {
       state.notes = snap.exists() ? snap.data() : null;
@@ -6634,7 +6670,48 @@ function start() {
       state.meta = snap.exists() ? snap.data() : null;
       drawAll();
     }));
-  });
+  }
 }
+
+// ---- 2026-10-24d: the cloud's free limit. See cloudGuard in start().
+const CLOUD_PROBE_MS = 5 * 60000;      // a look at one document this often
+const CLOUD_PAUSE_MS = 20 * 60000;     // when it's full, wait this long
+const cloudGuard = { user: null, attach: null, detach: null, on: false, full: false, next: 0, busy: false };
+async function cloudProbe(user) {
+  // One document, straight from the server: "ok", "full" (429 / quota) or
+  // "off" (no network, or it couldn't tell). Never throws.
+  try {
+    const token = await user.getIdToken();
+    const url = "https://firestore.googleapis.com/v1/projects/" + firebaseConfig.projectId +
+      "/databases/(default)/documents/users/" + user.uid + "/meta/desktop";
+    const stop = new AbortController();
+    const late = setTimeout(() => stop.abort(), 8000);
+    const got = await fetch(url, { headers: { Authorization: "Bearer " + token }, signal: stop.signal });
+    clearTimeout(late);
+    if (got.status === 429) return "full";
+    if (got.ok || got.status === 404) return "ok";
+    const text = await got.text().catch(() => "");
+    return /RESOURCE_EXHAUSTED|[Qq]uota/.test(text) ? "full" : "off";
+  } catch (error) { return "off"; }
+}
+async function cloudCheck(first) {
+  const g = cloudGuard;
+  if (!g.user || g.busy) return;
+  if (!first && Date.now() < g.next) return;
+  g.busy = true;
+  const said = await cloudProbe(g.user);
+  g.busy = false;
+  if (!g.user) return;
+  if (said === "full") {
+    if (g.on && g.detach) g.detach();
+    g.on = false; g.full = true; g.next = Date.now() + CLOUD_PAUSE_MS;
+  } else {
+    g.full = false; g.next = Date.now() + CLOUD_PROBE_MS;
+    if (!g.on && g.attach) { g.on = true; g.attach(); }
+  }
+  drawSync();
+}
+setInterval(() => { cloudCheck(false); }, 60000);
+window.__tutorCloudCheck = () => cloudCheck(true);   // for the site check: look now
 
 start();
