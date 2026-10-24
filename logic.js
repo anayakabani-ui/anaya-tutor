@@ -1542,7 +1542,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v88";   // 2026-10-24: was v87 (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81)
+export const APP_VERSION = "v89";   // 2026-10-24b: was v88 (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81)
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -3152,6 +3152,8 @@ export function spinGroups(lines, subjectOf) {
 // top, that can still be divided into subjects and tasks". A slice for each of
 // her four columns that has something in it, most important first (Have to do
 // starts at the top of the wheel), in her site's blues, teals, greens, pinks.
+// 2026-10-24b: "no i meant BY groups- not which group!". Now the columns are
+// the "Spin from" chips (spin only inside one), not slices.
 export const SPIN_PRIO_ORDER = ["have", "want", "should", "ideally"];
 export const SPIN_PRIO_COLOURS = { have: "#1F6391", want: "#14B8A6", should: "#3E9A4A", ideally: "#E86AA6" };
 export function spinPrioGroups(lines, prio) {
