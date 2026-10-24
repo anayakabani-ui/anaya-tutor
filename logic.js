@@ -1393,7 +1393,8 @@ export function allDays(live) {
   const flex = new Set((Array.isArray(held.flex) ? held.flex : []).map(String).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)));
   return { today: String(held.today || ""), days, flex, bank: bank.filter((l) => !l.planned),
            planned: bank.filter((l) => l.planned), goals, times, events, repeats, locks,
-           carry: held.carry && typeof held.carry === "object" ? held.carry : null };   // 2026-10-23: yesterday's, to bring over (carryOf reads it)
+           carry: held.carry && typeof held.carry === "object" ? held.carry : null,   // 2026-10-23: yesterday's, to bring over (carryOf reads it)
+           sort: held.sort && typeof held.sort === "object" ? held.sort : null };   // 2026-10-24e: Sort into groups from the laptop (sortOf reads it)
 }
 
 // ---- 2026-10-16: the times view. "HEAVILY reference google calender's
@@ -1542,7 +1543,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v89";   // 2026-10-24b: was v88 (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81)
+export const APP_VERSION = "v90";   // 2026-10-24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81)
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -3068,6 +3069,37 @@ export const SPIN_MOST = 12;
 // The laptop sends "carry" in live/alldays: {from, lines (what would come),
 // done (ticked that day), brought}. The lines move on the laptop (carry_all);
 // the treats are the website's, moved here.
+// ---- 2026-10-24e: "a button in more on the laptop tutor ... sorts it as have
+// to do, want to do, should try to do, ideally". The laptop sends {day, at,
+// prio: {words: level}}; it goes into that day's page prio once (sortAt).
+export function sortOf(found, today) {
+  const s = found && found.sort;
+  if (!s || typeof s !== "object" || String(s.day || "") !== today || !s.at) return null;
+  const levels = new Set(NOW_PRIOS.map((p) => p[0]));
+  const prio = {};
+  Object.keys(s.prio && typeof s.prio === "object" ? s.prio : {}).forEach((k) => {
+    if (levels.has(s.prio[k]) && String(k).trim()) prio[String(k).trim()] = s.prio[k];
+  });
+  return Object.keys(prio).length ? { day: today, at: String(s.at), prio } : null;
+}
+// Her lines' own words (raw) to the sorted levels; a line matched on its
+// words without case or spaces either end. What she's got that wasn't
+// sorted keeps where it was.
+export function sortPrio(sort, lines, prio) {
+  const out = { ...(prio && typeof prio === "object" ? prio : {}) };
+  if (!sort) return { prio: out, moved: 0 };
+  const key = (t) => String(t || "").trim().toLowerCase();
+  const by = {};
+  Object.keys(sort.prio).forEach((k) => { by[key(k)] = sort.prio[k]; });
+  let moved = 0;
+  (lines || []).forEach((l) => {
+    if (!l || l.kind !== "line" || l.done) return;
+    const level = by[key(l.raw)];
+    if (level) { if (out[l.raw] !== level) moved += 1; out[l.raw] = level; }
+  });
+  return { prio: out, moved };
+}
+
 export function carryOf(found) {
   const c = found && found.carry;
   if (!c || typeof c !== "object" || !/^\d{4}-\d{2}-\d{2}$/.test(String(c.from || ""))) return null;
