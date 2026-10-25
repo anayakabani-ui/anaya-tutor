@@ -5247,10 +5247,49 @@ function backToBox(day, raw) {
   Promise.resolve(moveLine({ text: raw, from: day }, BANK)).then(() => drawPage());
   drawPage();
 }
+// 2026-10-25g: "put back in task box should have a are u sure / ctrl click =
+// u are sure". The first press only arms it ("Sure?" for 4 seconds); the
+// second press does it. Ctrl, Shift or Cmd click does it at once.
+let boxArmed = null;
+function boxSure(key, e, run) {
+  if ((e && (e.ctrlKey || e.metaKey || e.shiftKey)) || (boxArmed && boxArmed.key === key && Date.now() < boxArmed.until)) {
+    boxArmed = null;
+    run();
+    return;
+  }
+  boxArmed = { key, until: Date.now() + 4000 };
+  page.said = "Put it back in the task box? Press again to be sure (Ctrl+click skips this).";
+  drawPage();
+  setTimeout(() => { if (boxArmed && boxArmed.key === key && Date.now() >= boxArmed.until) { boxArmed = null; drawPage(); } }, 4100);
+}
+function boxIsArmed(key) { return Boolean(boxArmed && boxArmed.key === key && Date.now() < boxArmed.until); }
 function boxButton(day, raw, short) {
-  const b = button(short ? "\u21A9" : "\u21A9 Box", short ? "now-box" : "quiet page-box", () => backToBox(day, raw));
-  b.title = "Put it back in the task box";
+  const key = day + "|" + raw;
+  const armed = boxIsArmed(key);
+  const b = button(armed ? (short ? "?" : "Sure?") : (short ? "\u21A9" : "\u21A9 Box"), (short ? "now-box" : "quiet page-box") + (armed ? " armed" : ""), (e) => boxSure(key, e, () => backToBox(day, raw)));
+  b.title = armed ? "Press again to put it back in the task box" : "Put it back in the task box (Ctrl+click skips the question)";
   b.setAttribute("aria-label", "Put back in the task box: " + raw);
+  return b;
+}
+
+// 2026-10-25g: "option to quickly do 'move to tmrw'". One day on, the same
+// move as dragging it onto the next day (moveLine, day_move), so the laptop
+// does it the usual way and Ctrl+Z on the calendar undoes it.
+function toTomorrow(day, raw) {
+  const to = addDayIso(day, 1);
+  const problem = moveProblem(raw, day, to, new Date());
+  if (problem) { page.said = problem; drawPage(); return; }
+  if (page.nowRaw === raw) page.nowRaw = null;
+  if (page.held && page.held.raw === raw) page.held = null;
+  page.said = "\u201c" + lineLabel(raw) + "\u201d moved to " + (day === isoDay(new Date()) ? "tomorrow" : dayHead(to, new Date())) + ". Ctrl+Z on the calendar puts it back.";
+  Promise.resolve(moveLine({ text: raw, from: day }, to)).then(() => drawPage());
+  drawPage();
+}
+function tmrwButton(day, raw, short) {
+  const nice = day === isoDay(new Date()) ? "Tmrw" : "+1 day";
+  const b = button(short ? "\u2192" : "\u2192 " + nice, short ? "now-tmrw" : "quiet page-tmrw", () => toTomorrow(day, raw));
+  b.title = "Move it to " + (day === isoDay(new Date()) ? "tomorrow" : "the next day");
+  b.setAttribute("aria-label", "Move to " + (day === isoDay(new Date()) ? "tomorrow" : "the next day") + ": " + raw);
   return b;
 }
 
@@ -5292,7 +5331,7 @@ function pageTaskList(day, lines, times) {
     const p = timeParts(at);
     item.append(el("span", "page-task-when", p ? clockWords(hhmm(p.start)) : line.done || inGroup ? "" : "no time"));
     if ((pageOf(day).stars || []).some((s) => s.text === line.raw)) item.append(el("span", "page-star-icon small", "★"));
-    if (!line.done && !line.repeat && !line.sub && !inGroup && day >= isoDay(new Date())) item.append(boxButton(day, line.raw, false));   // 2026-10-25f
+    if (!line.done && !line.repeat && !line.sub && !inGroup && day >= isoDay(new Date())) { item.append(tmrwButton(day, line.raw, false)); item.append(boxButton(day, line.raw, false)); }   // 2026-10-25f, 25g
     return item;
   };
   const opened = recall("tutor-minilists-open", {});
@@ -5865,7 +5904,8 @@ function pageNowCard(day, lines, times, found) {
         page.said = "“" + lineLabel(pick.raw) + "” is on tomorrow. That's fine.";
         drawPage();
       }),
-      pick.repeat ? "" : button("Back to task box", "quiet now-box-bar", () => backToBox(day, pick.raw)));   // 2026-10-25f
+      pick.repeat ? "" : button(boxIsArmed(day + "|" + pick.raw) ? "Sure?" : "Back to task box", "quiet now-box-bar" + (boxIsArmed(day + "|" + pick.raw) ? " armed" : ""), (e) => boxSure(day + "|" + pick.raw, e, () => backToBox(day, pick.raw))));
+    // (25g: Not today already sends the pick to tomorrow, so no extra button here.)   // 2026-10-25f
     bar.append(row);
     card.append(bar);
     const timer = doingRow(day, pick);              // 2026-10-21: "while doing X"
@@ -5908,7 +5948,7 @@ function pageNowCard(day, lines, times, found) {
       });
       x.setAttribute("aria-label", "Delete " + l.raw);
       x.title = "Delete";
-      if (!l.repeat && day >= isoDay(new Date())) item.append(chip, boxButton(day, l.raw, true), x);   // 2026-10-25f
+      if (!l.repeat && day >= isoDay(new Date())) item.append(chip, tmrwButton(day, l.raw, true), boxButton(day, l.raw, true), x);   // 2026-10-25f
       else item.append(chip, x);
       b.append(item);
     });
