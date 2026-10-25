@@ -1203,3 +1203,11 @@ button.spin-again-in { background: #14B8A6; }
 .now-box { width: 30px; flex: none; margin: 0; padding: 0; background: transparent; color: var(--accent); font-size: 1.05rem; opacity: 0.6; box-shadow: none; }
 .now-item:hover .now-box, .now-box:focus { opacity: 1; }
 .now-box:hover { background: var(--accent-soft); color: var(--text); }
+
+/* 2026-10-25g: move to tomorrow, same look as the Box button */
+.page-tmrw { flex: none; margin: 0; padding: 3px 10px; font-size: 0.78rem; border-radius: var(--r-chip); background: var(--accent-soft); color: var(--accent); width: auto; }
+.page-tmrw:hover { background: var(--hover); color: var(--text); box-shadow: none; }
+.now-tmrw { width: 30px; flex: none; margin: 0; padding: 0; background: transparent; color: var(--accent); font-size: 1.05rem; opacity: 0.6; box-shadow: none; }
+.now-item:hover .now-tmrw, .now-tmrw:focus { opacity: 1; }
+.now-tmrw:hover { background: var(--accent-soft); color: var(--text); }
+.page-box.armed, .now-box.armed, .now-box-bar.armed { background: var(--accent); color: #fff; opacity: 1; }
