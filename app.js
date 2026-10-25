@@ -5235,6 +5235,25 @@ function pageBlocksCard(day, lines, times, events) {
   return card;
 }
 
+// 2026-10-25f: "a quick 'put back to ttaskbox' on the pwa day page tasks".
+// The same move as dragging a task into the bank (moveLine to BANK), so the
+// laptop does it the way it always has and Ctrl+Z on the calendar undoes it.
+function backToBox(day, raw) {
+  const problem = moveProblem(raw, day, BANK, new Date());
+  if (problem) { page.said = problem; drawPage(); return; }
+  if (page.nowRaw === raw) page.nowRaw = null;
+  if (page.held && page.held.raw === raw) page.held = null;
+  page.said = "\u201c" + lineLabel(raw) + "\u201d is back in the task box. Ctrl+Z on the calendar puts it back.";
+  Promise.resolve(moveLine({ text: raw, from: day }, BANK)).then(() => drawPage());
+  drawPage();
+}
+function boxButton(day, raw, short) {
+  const b = button(short ? "\u21A9" : "\u21A9 Box", short ? "now-box" : "quiet page-box", () => backToBox(day, raw));
+  b.title = "Put it back in the task box";
+  b.setAttribute("aria-label", "Put back in the task box: " + raw);
+  return b;
+}
+
 function pageTaskList(day, lines, times) {
   // 2026-10-21c: "maybe this could be collapseable? and also id like it to
   // show the mini lists". Hide folds the card (kept on this device); a
@@ -5273,6 +5292,7 @@ function pageTaskList(day, lines, times) {
     const p = timeParts(at);
     item.append(el("span", "page-task-when", p ? clockWords(hhmm(p.start)) : line.done || inGroup ? "" : "no time"));
     if ((pageOf(day).stars || []).some((s) => s.text === line.raw)) item.append(el("span", "page-star-icon small", "★"));
+    if (!line.done && !line.repeat && !line.sub && !inGroup && day >= isoDay(new Date())) item.append(boxButton(day, line.raw, false));   // 2026-10-25f
     return item;
   };
   const opened = recall("tutor-minilists-open", {});
@@ -5844,7 +5864,8 @@ function pageNowCard(day, lines, times, found) {
         moveLine({ text: pick.raw, from: day }, addDayIso(day, 1));
         page.said = "“" + lineLabel(pick.raw) + "” is on tomorrow. That's fine.";
         drawPage();
-      }));
+      }),
+      pick.repeat ? "" : button("Back to task box", "quiet now-box-bar", () => backToBox(day, pick.raw)));   // 2026-10-25f
     bar.append(row);
     card.append(bar);
     const timer = doingRow(day, pick);              // 2026-10-21: "while doing X"
@@ -5887,7 +5908,8 @@ function pageNowCard(day, lines, times, found) {
       });
       x.setAttribute("aria-label", "Delete " + l.raw);
       x.title = "Delete";
-      item.append(chip, x);
+      if (!l.repeat && day >= isoDay(new Date())) item.append(chip, boxButton(day, l.raw, true), x);   // 2026-10-25f
+      else item.append(chip, x);
       b.append(item);
     });
     if (!list.length) b.append(el("p", "muted now-empty", "Drag a task here"));
