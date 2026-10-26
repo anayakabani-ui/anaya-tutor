@@ -48,7 +48,7 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          roundDown5, flowExtend, flowAfterDone, flowSwitch, flowBreak, manyTimes,
          spinPick, spinTurn, SPIN_COLOURS, SPIN_MOST,
          carryOf, treatsCarry, carryWords, spinGroups, SPIN_OTHER, pickableLines,
-         spinPrioGroups, SPIN_PRIO_COLOURS, sortOf, sortPrio } from "./logic.js";   // 2026-10-23   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
+         spinPrioGroups, SPIN_PRIO_COLOURS, sortOf, prevPrioDay, importPrio, sortPrio } from "./logic.js";   // 2026-10-23   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
 
 const $ = (id) => document.getElementById(id);
 // 2026-10-18b: a line's subject, by its words, from the bank's subject lists.
@@ -5915,6 +5915,24 @@ function pageNowCard(day, lines, times, found) {
   // 2026-10-20h: her four columns, least to most needed. Press one to do it
   // now; drag it to another column; x deletes it.
   const cols = nowColumns(live, prio);
+  // 2026-10-26: "if they can retain their lists tmrw-ish, if i want i can
+  // click (import settings from yesterday)". Only on a press: it puts the
+  // lines she hasn't placed on this day in the groups the last day with
+  // groups had them, matched on their words. Nothing is read from the cloud.
+  const fromDay = prevPrioDay(state.pages, day);
+  const imp = fromDay ? importPrio(live, prio, (state.pages[fromDay] || {}).prio) : null;
+  if (imp && imp.count > 0) {
+    const bar = el("div", "now-import");
+    const when = fromDay === addDayIso(day, -1) ? "yesterday" : dayHead(fromDay, new Date());
+    const go = button("Use " + (when === "yesterday" ? "yesterday's" : when + "'s") + " groups (" + imp.count + ")", "quiet now-import-go", () => {
+      savePage(day, { prio: imp.prio });
+      page.said = imp.count + (imp.count === 1 ? " task is" : " tasks are") + " in the same group as on " + (when === "yesterday" ? "yesterday" : when) + ". Drag any you'd put somewhere else.";
+      drawPage();
+    });
+    go.title = "Put the tasks you haven't grouped yet in the groups they were in on " + when;
+    bar.append(go);
+    card.append(bar);
+  }
   const wrap = el("div", "now-blocks");
   NOW_PRIOS.forEach(([key, label]) => {
     const list = cols[key] || [];
@@ -5926,7 +5944,7 @@ function pageNowCard(day, lines, times, found) {
       e.preventDefault();
       b.classList.remove("over");
       const raw = e.dataTransfer.getData("text/plain");
-      if (!raw || nowPrioOf(raw, prio) === key) return;
+      if (!raw || nowPrioOf(raw, prio) === key || !live.some((l) => l.raw === raw)) return;   // 2026-10-26: only this day's own tasks
       savePage(day, { prio: { ...prio, [raw]: key } });
       page.said = "“" + lineLabel(raw) + "” is in " + label + " now.";
       drawPage();
@@ -5940,6 +5958,11 @@ function pageNowCard(day, lines, times, found) {
       chip.draggable = true;
       chip.title = "Press to do it now. Drag it to another column.";
       chip.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/plain", l.raw); e.dataTransfer.effectAllowed = "move"; });
+      // 2026-10-26: "ability to quickly drag them around": the whole row is
+      // the handle, not just the words, and it dims while it's being dragged.
+      item.draggable = true;
+      item.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/plain", l.raw); e.dataTransfer.effectAllowed = "move"; item.classList.add("dragging"); });
+      item.addEventListener("dragend", () => item.classList.remove("dragging"));
       const x = button("×", "now-x", () => {
         if (page.nowRaw === l.raw) page.nowRaw = null;
         deleteLine(day, l.raw);
