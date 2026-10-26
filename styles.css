@@ -1211,3 +1211,10 @@ button.spin-again-in { background: #14B8A6; }
 .now-item:hover .now-tmrw, .now-tmrw:focus { opacity: 1; }
 .now-tmrw:hover { background: var(--accent-soft); color: var(--text); }
 .page-box.armed, .now-box.armed, .now-box-bar.armed { background: var(--accent); color: #fff; opacity: 1; }
+
+/* 2026-10-26: import yesterday's groups, whole row draggable */
+.now-import { margin: 0 0 8px; }
+.now-import-go { padding: 4px 14px; font-size: 0.85rem; border-radius: var(--r-chip); background: var(--accent-soft); color: var(--accent); }
+.now-item { cursor: grab; }
+.now-item.dragging { opacity: 0.45; }
+.now-block.over { outline: 2px dashed var(--accent); outline-offset: -3px; }
