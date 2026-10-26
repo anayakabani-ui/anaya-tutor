@@ -1543,7 +1543,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v92";   // 2026-10-25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81)
+export const APP_VERSION = "v93";   // 2026-10-26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81)
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -3095,9 +3095,38 @@ export function sortPrio(sort, lines, prio) {
   (lines || []).forEach((l) => {
     if (!l || l.kind !== "line" || l.done) return;
     const level = by[key(l.raw)];
-    if (level) { if (out[l.raw] !== level) moved += 1; out[l.raw] = level; }
+    // 2026-10-26: "it moved things that were in have to do to should try to
+    // do which is WRONG". A line she has already put in a group stays where
+    // she put it; the sort only places the ones she hasn't touched.
+    if (level && !NOW_PRIOS.some((p) => p[0] === out[l.raw])) { moved += 1; out[l.raw] = level; }
   });
   return { prio: out, moved };
+}
+
+// 2026-10-26: "if they can retain their lists tmrw-ish, if i want i can click
+// (import settings from yesterday)". The most recent earlier day (within two
+// weeks) that has groups, and what that would put on this day: only lines she
+// hasn't placed here yet, matched on their words (any case, spaces either end).
+export function prevPrioDay(pages, day) {
+  const from = isoDay(new Date(new Date(day + "T12:00:00").getTime() - 14 * 86400000));
+  const days = Object.keys(pages || {}).filter((k) => /^\d{4}-\d{2}-\d{2}$/.test(k) && k < day && k >= from &&
+    pages[k] && pages[k].prio && typeof pages[k].prio === "object" && Object.keys(pages[k].prio).length);
+  return days.sort().pop() || "";
+}
+export function importPrio(lines, prio, fromPrio) {
+  const out = { ...(prio && typeof prio === "object" ? prio : {}) };
+  const key = (t) => String(t || "").trim().toLowerCase();
+  const by = {};
+  Object.keys(fromPrio && typeof fromPrio === "object" ? fromPrio : {}).forEach((k) => {
+    if (NOW_PRIOS.some((p) => p[0] === fromPrio[k])) by[key(k)] = fromPrio[k];
+  });
+  let count = 0;
+  (lines || []).forEach((l) => {
+    if (!l || l.kind !== "line" || l.done || l.repeat) return;
+    const level = by[key(l.raw)];
+    if (level && !NOW_PRIOS.some((p) => p[0] === out[l.raw])) { out[l.raw] = level; count += 1; }
+  });
+  return { prio: out, count };
 }
 
 export function carryOf(found) {
