@@ -1218,3 +1218,22 @@ button.spin-again-in { background: #14B8A6; }
 .now-item { cursor: grab; }
 .now-item.dragging { opacity: 0.45; }
 .now-block.over { outline: 2px dashed var(--accent); outline-offset: -3px; }
+
+/* 2026-10-29: save and clear the bank, her own lists with colours, revision */
+.bank-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0 10px; }
+.bank-actions button.armed { background: #b5302a; color: #fff; }
+.bank-saves, .bank-newform { flex-basis: 100%; display: flex; flex-direction: column; gap: 6px; background: var(--card); border-radius: 12px; padding: 8px 10px; box-shadow: var(--shadow); }
+.bank-newform { flex-direction: row; flex-wrap: wrap; align-items: center; }
+.bank-newform .list-name { flex: 1 1 200px; min-width: 0; }
+.bank-save-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.bank-save-at { flex: 1 1 180px; min-width: 0; }
+.list-swatches { display: flex; flex-wrap: wrap; gap: 6px; }
+.list-swatch { width: 26px; height: 26px; min-width: 26px; padding: 0; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
+.list-swatch.on { border-color: var(--text, #222); box-shadow: 0 0 0 2px var(--card); }
+.list-colour { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 4px; }
+.list-colour-btn { font-size: 0.8em; padding: 2px 8px; border-left: 10px solid var(--dot, #9aa6ae); }
+.bank-empty { margin: 4px 6px; }
+.bank-revision { border-top: 4px solid #9b6bd6; }
+.rev-line { display: flex; gap: 8px; align-items: baseline; }
+.rev-day { font-weight: 700; white-space: nowrap; }
+.rev-what { min-width: 0; overflow-wrap: anywhere; }
