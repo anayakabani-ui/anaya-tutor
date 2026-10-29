@@ -1394,7 +1394,11 @@ export function allDays(live) {
   return { today: String(held.today || ""), days, flex, bank: bank.filter((l) => !l.planned),
            planned: bank.filter((l) => l.planned), goals, times, events, repeats, locks,
            carry: held.carry && typeof held.carry === "object" ? held.carry : null,   // 2026-10-23: yesterday's, to bring over (carryOf reads it)
-           sort: held.sort && typeof held.sort === "object" ? held.sort : null };   // 2026-10-24e: Sort into groups from the laptop (sortOf reads it)
+           sort: held.sort && typeof held.sort === "object" ? held.sort : null,
+           // 2026-10-29: her own bank lists (name: colour), the saved banks and the revision sessions
+           lists: held.lists && typeof held.lists === "object" && !Array.isArray(held.lists) ? held.lists : {},
+           saves: (Array.isArray(held.saves) ? held.saves : []).filter((x) => x && x.id),
+           revision: (Array.isArray(held.revision) ? held.revision : []).filter((r) => r && /^\d{4}-\d{2}-\d{2}$/.test(String(r.day || ""))) };   // 2026-10-24e: Sort into groups from the laptop (sortOf reads it)
 }
 
 // ---- 2026-10-16: the times view. "HEAVILY reference google calender's
@@ -1543,7 +1547,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v93";   // 2026-10-26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81)
+export const APP_VERSION = "v94";   // 2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81)
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -1631,9 +1635,43 @@ export const SUBJECT_HEX = {
   english: "#7CC76A", french: "#2FA59B", geography: "#9B6BD6", maths: "#4C8DF6",
   physics: "#EE6E66",
 };
+// 2026-10-29: "make new sublists and choose colours". Her own lists (and a
+// colour she picked for a subject) sit here, lower case, set from the page.
+let LIST_COLOURS = {};
+export function setListColours(map) {
+  const out = {};
+  Object.keys(map || {}).forEach((n) => {
+    const c = String((map || {})[n] || "");
+    if (/^#[0-9a-fA-F]{6}$/.test(c)) out[String(n).trim().toLowerCase()] = c;
+  });
+  LIST_COLOURS = out;
+}
+export const LIST_SWATCHES = ["#4C8DF6", "#3E9A4A", "#E86AA6", "#9B6BD6", "#EE6E66", "#F2A93B", "#14B8A6", "#9AA6AE", "#B5302A", "#7CC76A"];
 export function subjectColour(name) {
   const key = String(name || "").trim().toLowerCase();
-  return SUBJECT_HEX[key] || SUBJECT_HEX[key === "design technology" ? "dt" : ""] || "";
+  return LIST_COLOURS[key] || SUBJECT_HEX[key] || SUBJECT_HEX[key === "design technology" ? "dt" : ""] || "";
+}
+// Her lists as [{name, colour}] in the order she made them, with the empty
+// ones, for the bank's tabs. A list with lines in the bank is not repeated.
+export function bankListNames(found, lists) {
+  const out = [];
+  const seen = new Set(bankTabs((found && found.bank) || []).map((t) => t.name.toLowerCase()));
+  Object.keys(lists || {}).forEach((n) => {
+    const name = String(n).trim();
+    if (name && !seen.has(name.toLowerCase())) { seen.add(name.toLowerCase()); out.push(name); }
+  });
+  return out;
+}
+// Saved banks as a plain text copy (what the Download button gives).
+export function bankSaveText(save) {
+  const rows = ["Task bank saved " + String((save && save.at) || ""), ""];
+  let last = null;
+  ((save && save.lines) || []).forEach((l) => {
+    const list = String(l.list || "Other");
+    if (list !== last) { rows.push("", list); last = list; }
+    rows.push("- " + String(l.text || ""));
+  });
+  return rows.join("\n") + "\n";
 }
 
 // 2026-10-18b: event colours she can choose. "" is the default look.
