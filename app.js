@@ -35,7 +35,7 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          HOUR_PX, ZOOMS, setHourPx, timeSnap, pickName, CAL_LAYOUTS, clockWords, minutesOf, hhmm, timeParts, timeSpan, taskLength, lineLabel, boxHits, shiftTimes, dropTime, mergedTimes, timeColumn, firstScroll, scrollFloor, CAL_LOCK_HOUR, settleSwaps, swapSig, calendarStep, calendarTitle, calendarCells,
          moveProblem, settleMoves, notesIncoming, noteVersion,
          splitLine, parseChat, chatWaiting, APP_VERSION, nowScroll, eventAfterDrag,
-         planCheck, repeatWords, subjectColour, eventColour, EVENT_COLOURS,
+         planCheck, repeatWords, subjectColour, setListColours, LIST_SWATCHES, bankListNames, bankSaveText, eventColour, EVENT_COLOURS,
          pageData, pageHabits, pageSlots, pageGaps, longerBy, pageSteps, carryList, PAGE_MOST_HABITS, PAGE_HABIT_IDEAS, PAGE_MOST_STARS, pageDoneBySlot,
          smartItems, smartPlan, smartDefaults, smartLeftovers, smartReadWords, smartLevelOf, smartSubjectKey, SMART_LEVELS,
          NOW_BLOCKS, nowBlocks, nowPick, nowRollover, nowBlockOf,
@@ -127,7 +127,7 @@ const state = { tasks: [], exams: [], timetable: [], visits: [], day: null, meta
                 dragging: false, calStale: false, calDrag: null,
                 notes: null,           // live/notes off the laptop
                 // 2026-10-17: the bank's folds, the repeat form, the chat.
-                bankShut: new Set(), bankGroupsOpen: new Set(), calRepeat: null, flexFlip: {}, calInfo: null, calDayMenu: null, calDelete: null, delWaiting: new Map(), picksWaiting: [], calMulti: [], calMultiRepeat: false, calHidePast: false,
+                bankShut: new Set(), bankGroupsOpen: new Set(), listForm: null, colourFor: "", colourWaiting: {}, listsWaiting: {}, savesOpen: false, calRepeat: null, flexFlip: {}, calInfo: null, calDayMenu: null, calDelete: null, delWaiting: new Map(), picksWaiting: [], calMulti: [], calMultiRepeat: false, calHidePast: false,
                 chat: [], chatSeen: false, chatWaiting: [],
                 // 2026-10-17b: events changed here, waiting for the laptop
                 // (id -> {day, title, start, end, atMs}); the one being
@@ -2656,7 +2656,15 @@ function drawBank(box, found, pick, where) {
   }
   bankBox.append(bankTop);
   if (bankHidden) { bankBox.classList.add("bank-hidden"); box.append(bankBox); return; }
+  // 2026-10-29: her lists and the colours she picked (a list she just made
+  // or recoloured shows at once; the laptop's copy takes over when it has it).
+  const mineLists = { ...((found && found.lists) || {}) };
+  Object.keys(state.listsWaiting).forEach((n) => { if (n in mineLists) delete state.listsWaiting[n]; else mineLists[n] = state.listsWaiting[n]; });
+  Object.keys(state.colourWaiting).forEach((n) => { if (mineLists[n] === state.colourWaiting[n]) delete state.colourWaiting[n]; else mineLists[n] = state.colourWaiting[n]; });
+  setListColours(mineLists);
+  bankBox.append(bankActions(found, mineLists));
   const tabs = bankTabs(withMoves(found, state.moves).get(BANK) || []);
+  bankListNames(found, mineLists).forEach((name) => tabs.push({ name, lines: [], mine: true }));
   if (!tabs.length) bankBox.append(el("p", "muted", "Your Subjects lists show here. You can also drag a task here to keep it for later, off every day."));
   const grid = el("div", "bank-grid");
   tabs.forEach((tab) => {
@@ -2676,7 +2684,9 @@ function drawBank(box, found, pick, where) {
       el("span", "bank-count", String(count)));
     card.append(head);
     if (!shut) {
-      card.append(pickCard(tab.name));
+      card.append(listColourBar(tab.name, mineLists));
+      if (tab.lines.length) card.append(pickCard(tab.name));
+      else card.append(el("p", "muted bank-empty", "Nothing in this list yet."));
       // The lines, with each little heading's lines under it, folded.
       const rows = dayLines(tab.lines, BANK).filter((l) => l.kind !== "gap");
       let i = 0;
@@ -2713,8 +2723,10 @@ function drawBank(box, found, pick, where) {
     }
     grid.append(card);
   });
+  const comingUp = ((found && found.revision) || []);
+  if (comingUp.length) grid.append(revisionCard(comingUp));         // 2026-10-29
   if (tabs.length) grid.prepend(generalPick(tabs));       // 2026-10-19c
-  if (tabs.length) bankBox.append(grid);
+  if (tabs.length || comingUp.length) bankBox.append(grid);
   // 2026-10-21f: "if i add a new task, it will not reset my position on how
   // far ive scrolled on it". Every redraw puts the bank back where she was.
   grid.addEventListener("scroll", () => { if (grid.isConnected) state.bankScroll = grid.scrollTop; }, { passive: true });   // a grid just taken off reads 0
@@ -2722,6 +2734,148 @@ function drawBank(box, found, pick, where) {
   if (back) requestAnimationFrame(() => { if (grid.isConnected) grid.scrollTop = back; });
   calDrop(bankBox, BANK, pick);
   box.append(bankBox);
+}
+
+// 2026-10-29: "save task bank and clear it" and "make new sublists and
+// choose colours". Save keeps a copy (on the laptop too, as a text file).
+// Clear saves first, then empties the bank. Nothing is ever lost: the copy
+// has Restore. Two presses for Clear (Ctrl+click skips the second).
+let bankArmed = null;
+function bankActions(found, mineLists) {
+  const bar = el("div", "bank-actions");
+  const saves = (found && found.saves) || [];
+  const said = (words) => { state.calSaid = words; drawCalendar(); };
+  const save = button("Save bank", "quiet bank-save", () => {
+    sendEdit({ kind: "bank_save", clear: false });
+    said("Saving a copy of the bank. It shows under Saved copies in a few seconds.");
+  });
+  save.title = "Keep a copy of everything in the bank, as it is now";
+  const key = "bank-clear";
+  const armed = Boolean(bankArmed && bankArmed.key === key && Date.now() < bankArmed.until);
+  const clear = button(armed ? "Sure? Save and clear" : "Save and clear", "quiet bank-clear" + (armed ? " armed" : ""), (e) => {
+    if ((e && (e.ctrlKey || e.metaKey || e.shiftKey)) || armed) {
+      bankArmed = null;
+      sendEdit({ kind: "bank_save", clear: true });
+      said("Saved a copy and clearing the bank. Your Subjects box is not changed. Restore it any time from Saved copies.");
+      return;
+    }
+    bankArmed = { key, until: Date.now() + 4000 };
+    state.calSaid = "Save a copy, then empty the bank? Press again to be sure (Ctrl+click skips this).";
+    drawCalendar();
+    setTimeout(() => { if (bankArmed && Date.now() >= bankArmed.until) { bankArmed = null; drawCalendar(); } }, 4100);
+  });
+  clear.title = armed ? "Press again: a copy is saved, then the bank is emptied" : "Keep a copy, then empty the bank. Nothing is lost, you can restore it";
+  const copies = button("Saved copies" + (saves.length ? " (" + saves.length + ")" : ""), "quiet bank-copies", () => { state.savesOpen = !state.savesOpen; drawCalendar(); });
+  copies.setAttribute("aria-expanded", String(state.savesOpen));
+  const make = button("+ New list", "quiet bank-newlist", () => {
+    state.listForm = state.listForm ? null : { name: "", colour: LIST_SWATCHES[0] };
+    drawCalendar();
+  });
+  bar.append(save, clear, copies, make);
+  if (state.listForm) bar.append(newListForm(mineLists));
+  if (state.savesOpen) {
+    const panel = el("div", "bank-saves");
+    if (!saves.length) panel.append(el("p", "muted", "No saved copies yet. Press Save bank to keep one."));
+    saves.forEach((one) => {
+      const row = el("div", "bank-save-row");
+      row.append(el("span", "bank-save-at", one.at + " \u00b7 " + one.count + (one.count === 1 ? " task" : " tasks") + (one.cleared ? " \u00b7 cleared" : "")));
+      const back = button("Restore", "quiet", () => {
+        sendEdit({ kind: "bank_restore", id: String(one.id) });
+        said("Putting that copy back in the bank.");
+      });
+      back.title = "Put the tasks from this copy back in the bank";
+      const down = button("Download", "quiet", () => {
+        const blob = new Blob([bankSaveText(one)], { type: "text/plain" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob); a.download = "task-bank-" + String(one.id) + ".txt";
+        document.body.append(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      });
+      row.append(back, down);
+      panel.append(row);
+    });
+    bar.append(panel);
+  }
+  return bar;
+}
+
+function swatchRow(current, onPick) {
+  const row = el("div", "list-swatches");
+  row.setAttribute("role", "group");
+  row.setAttribute("aria-label", "Colour");
+  LIST_SWATCHES.forEach((c) => {
+    const b = button("", "list-swatch" + (String(current).toLowerCase() === c.toLowerCase() ? " on" : ""), () => onPick(c));
+    b.style.background = c;
+    b.title = c;
+    b.setAttribute("aria-label", "Colour " + c);
+    b.setAttribute("aria-pressed", String(String(current).toLowerCase() === c.toLowerCase()));
+    row.append(b);
+  });
+  return row;
+}
+
+function newListForm(mineLists) {
+  const f = state.listForm;
+  const form = el("div", "bank-newform");
+  const input = el("input", "add-task-input list-name");
+  input.placeholder = "List name (Fun stuff, Other commitments\u2026)";
+  input.maxLength = 40;
+  input.value = f.name;
+  input.addEventListener("input", () => { f.name = input.value; });
+  const make = () => {
+    const name = f.name.replace(/\s+/g, " ").trim();
+    if (!name) { state.calSaid = "Give the list a name first."; drawCalendar(); return; }
+    const clash = Object.keys(mineLists).concat(bankTabs(withMoves(allDays(state.alldays), state.moves).get(BANK) || []).map((t) => t.name))
+      .some((n) => n.toLowerCase() === name.toLowerCase());
+    if (clash) { state.calSaid = "There's already a list called " + name + "."; drawCalendar(); return; }
+    state.listsWaiting[name] = f.colour;
+    sendEdit({ kind: "list_new", list: name, colour: f.colour });
+    state.listForm = null;
+    state.calSaid = "Made the list " + name + ". Drag tasks into it, or add one with its + button.";
+    drawCalendar();
+  };
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") make(); if (e.key === "Escape") { state.listForm = null; drawCalendar(); } });
+  form.append(input, swatchRow(f.colour, (c) => { f.colour = c; drawCalendar(); }), button("Make list", "quiet bank-make", make));
+  requestAnimationFrame(() => { if (input.isConnected && !input.value) input.focus({ preventScroll: true }); });
+  return form;
+}
+
+// A small dot on each list to change its colour (a subject's too).
+function listColourBar(name, mineLists) {
+  const wrap = el("div", "list-colour");
+  const now = subjectColour(name);
+  const open = state.colourFor === name;
+  const dot = button(open ? "Close" : "Colour", "quiet list-colour-btn", () => { state.colourFor = open ? "" : name; drawCalendar(); });
+  if (now) dot.style.setProperty("--dot", now);
+  dot.title = "Change this list's colour";
+  dot.setAttribute("aria-expanded", String(open));
+  wrap.append(dot);
+  if (open) wrap.append(swatchRow(now, (c) => {
+    state.colourWaiting[name] = c;
+    sendEdit({ kind: "list_colour", list: name, colour: c });
+    state.colourFor = "";
+    drawCalendar();
+  }));
+  return wrap;
+}
+
+// 2026-10-29: "it should put each revision session scheduled there". The
+// sessions the tutor has planned, from today on, in their subject's colour.
+function revisionCard(items) {
+  const card = el("section", "bank-sub bank-revision");
+  card.append(el("p", "bank-sub-name", "Revision (" + items.length + ")"));
+  const kinds = { deep: "Deep dive", practice: "Practice test", session: "Revision" };
+  items.forEach((r) => {
+    const when = new Date(r.day + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+    const what = (kinds[r.kind] || "Revision") + ": " + (r.subject || "your test") + (r.topic ? " (" + r.topic + ")" : "") + (r.minutes ? ", " + r.minutes + " min" : "");
+    const row = el("p", "plan-line rev-line", "");
+    row.append(el("span", "rev-day", when), el("span", "rev-what", what));
+    const c = subjectColour(r.subject);
+    if (c) { row.classList.add("subj"); row.style.setProperty("--subj", c); }
+    row.title = "Planned for " + when + ". The tutor puts it on that day and asks you when it's time.";
+    card.append(row);
+  });
+  return card;
 }
 
 // "complete a task from [list] (optional if minimum worth x mins)": drag
