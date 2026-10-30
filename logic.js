@@ -1402,6 +1402,9 @@ export function allDays(live) {
            // the tutor from before v94 (no Restart since), so it dropped the
            // new edits without a word. Only a laptop that knows them sends "saves".
            banksOk: Array.isArray(held.saves),
+           // 2026-10-30c: her starred quick wins (their words), and whether the laptop knows them
+           quick: (Array.isArray(held.quick) ? held.quick : []).map((t) => String(t || "").trim()).filter(Boolean),
+           quickOk: Array.isArray(held.quick),
            revision: (Array.isArray(held.revision) ? held.revision : []).filter((r) => r && /^\d{4}-\d{2}-\d{2}$/.test(String(r.day || ""))) };   // 2026-10-24e: Sort into groups from the laptop (sortOf reads it)
 }
 
@@ -1551,7 +1554,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v96";   // 2026-10-30b: was v95 (2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81)))
+export const APP_VERSION = "v97";   // 2026-10-30c: was v96 (2026-10-30b: was v95 (2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81))))
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -3282,4 +3285,29 @@ export function pickableLines(lines) {
     out.push({ raw: l.raw, line: l, label: l.sub && head ? head + ": " + text : text });
   });
   return out;
+}
+
+// 2026-10-30c: "multiselect quick wins and they have a star". Her stars
+// (from the laptop) with what she's just pressed laid over them until the
+// laptop has caught up (or two minutes). Lower case words.
+export function quickStars(found, waiting, nowMs) {
+  const out = new Set(((found && found.quick) || []).map((t) => String(t).trim().toLowerCase()));
+  (waiting || []).forEach((w) => {
+    if (nowMs - w.atMs > 120000) return;
+    w.texts.forEach((t) => { const k = String(t).trim().toLowerCase(); if (w.on) out.add(k); else out.delete(k); });
+  });
+  return out;
+}
+
+// One to suggest: today's open starred lines first (not the one she's on),
+// else the soonest day ahead. Returns { day, raw } or null.
+export function quickPick(days, today, stars, skipRaw, rnd) {
+  const r = typeof rnd === "number" ? rnd : Math.random();
+  const open = (d) => (d.lines || []).filter((l) => !l.done && stars.has(String(l.text || "").trim().toLowerCase()))
+    .map((l) => ({ day: d.day, raw: String(l.text).trim() }));
+  const todays = (days || []).filter((d) => d.day === today).flatMap(open);
+  const pool0 = todays.length ? todays : (days || []).filter((d) => d.day > today).sort((a, b) => (a.day < b.day ? -1 : 1)).flatMap(open).slice(0, 1);
+  const pool = pool0.filter((p) => p.raw !== skipRaw).length ? pool0.filter((p) => p.raw !== skipRaw) : pool0;
+  if (!pool.length) return null;
+  return pool[Math.min(pool.length - 1, Math.floor(r * pool.length))];
 }
