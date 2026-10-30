@@ -1237,3 +1237,9 @@ button.spin-again-in { background: #14B8A6; }
 .rev-line { display: flex; gap: 8px; align-items: baseline; }
 .rev-day { font-weight: 700; white-space: nowrap; }
 .rev-what { min-width: 0; overflow-wrap: anywhere; }
+
+/* 2026-10-30: revision sessions can be dragged to another day (it asks first) */
+.rev-line.rev-drag { cursor: grab; }
+.rev-line.rev-drag:active { cursor: grabbing; }
+.rev-ask { flex-wrap: wrap; gap: 8px; align-items: center; }
+.rev-ask .plan-title { margin: 0; flex: 1 1 220px; }
