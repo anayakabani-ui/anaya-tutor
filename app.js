@@ -2132,6 +2132,7 @@ function timesDrop(target, day, onHours) {
     const held = state.calDrag;
     state.dragging = false; state.calDrag = null; state.calStale = false;
     if (!held) return;
+    if (held.revision) { revisionDropped(held, day); return; }        // 2026-10-30
     if (held.event) { eventDropped(held.event, day, onHours ? at(event) : ""); return; }   // 2026-10-18
     if (ins) { insertDrop(held, day, ins.at); return; }
     if (held.many) { moveMany(held, day, onHours ? at(event) : ""); return; }    // 2026-10-19l, 21g: on the hours, with times
@@ -2886,9 +2887,57 @@ function revisionCard(items) {
     const c = subjectColour(r.subject);
     if (c) { row.classList.add("subj"); row.style.setProperty("--subj", c); }
     row.title = "Planned for " + when + ". The tutor puts it on that day and asks you when it's time.";
+    // 2026-10-30: "draggable task maybe but it would ask first". Drag it
+    // onto another day; the page asks before it moves.
+    if (r.id) {
+      row.draggable = true;
+      row.classList.add("rev-drag");
+      row.title = "Planned for " + when + ". Drag it onto another day to move it (it asks first).";
+      row.addEventListener("dragstart", (event) => {
+        state.dragging = true;
+        state.calDrag = { revision: r, what, from: r.day, text: what };
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", what);
+      });
+      row.addEventListener("dragend", () => {
+        state.dragging = false;
+        state.calDrag = null;
+        document.querySelectorAll(".plan-day.over").forEach((d) => d.classList.remove("over"));
+        if (state.calStale) { state.calStale = false; drawCalendar(); }
+      });
+    }
     card.append(row);
   });
   return card;
+}
+
+// 2026-10-30: a revision session let go on a day: the question first.
+function revisionDropped(held, dayId) {
+  if (dayId === held.revision.day) return;
+  if (dayId < isoDay(new Date())) { state.calSaid = "That day's gone. Pick today or later."; drawCalendar(); return; }
+  if (held.revision.exam && dayId > held.revision.exam) { state.calSaid = "That's after the test. Pick a day before it."; drawCalendar(); return; }
+  state.revAsk = { r: held.revision, what: held.what, to: dayId };
+  state.calSaid = "";
+  drawCalendar();
+}
+
+// 2026-10-30: the question before a revision session moves.
+function revisionAsk() {
+  const ask = state.revAsk;
+  const bar = el("div", "plan-bar rev-ask");
+  const from = new Date(ask.r.day + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+  const to = new Date(ask.to + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+  bar.setAttribute("role", "alertdialog");
+  bar.append(el("p", "plan-title", "Move " + ask.what + " from " + from + " to " + to + "?"),
+    button("Move it", "quiet rev-yes", () => {
+      state.revAsk = null;
+      if (laptopTooOld()) { state.calSaid = LAPTOP_OLD_WORDS; drawCalendar(); return; }
+      sendEdit({ kind: "revision_move", id: String(ask.r.id), to: ask.to });
+      state.calSaid = "Moving it to " + to + ". The tutor asks you about it then.";
+      drawCalendar();
+    }),
+    button("Keep it", "quiet rev-no", () => { state.revAsk = null; state.calSaid = "Left where it was."; drawCalendar(); }));
+  return bar;
 }
 
 // "complete a task from [list] (optional if minimum worth x mins)": drag
@@ -3063,6 +3112,7 @@ function calDrop(target, dayId, pick) {
     if (!state.calDrag || state.calDrag.from === dayId) return;
     if (state.calDrag.from === BANK_PICK && dayId === BANK) return;   // 2026-10-16m
     if (state.calDrag.event && dayId === BANK) return;                 // 2026-10-18
+    if (state.calDrag.revision && dayId === BANK) return;              // 2026-10-30
     event.preventDefault();
     event.dataTransfer.dropEffect = state.calDrag.from === BANK_PICK ? "copy" : "move";   // 2026-10-18f
     target.classList.add("over");
@@ -3075,6 +3125,7 @@ function calDrop(target, dayId, pick) {
     const held = state.calDrag;
     state.dragging = false; state.calDrag = null; state.calStale = false;
     if (held && held.event) { if (dayId !== BANK) eventDropped(held.event, dayId, ""); return; }   // 2026-10-18
+    if (held && held.revision) { if (dayId !== BANK) revisionDropped(held, dayId); return; }   // 2026-10-30: asks first
     if (held && held.many) moveMany(held, dayId);      // 2026-10-19l
     else if (held) moveLine(held, dayId);
   });
@@ -3879,6 +3930,7 @@ function drawCalendarNow() {
       : "Drag a task onto another day. Or press it, then press Move here on the day."));
   said.setAttribute("role", "status");
   box.append(said);
+  if (state.revAsk) box.append(revisionAsk());          // 2026-10-30
   // 2026-10-16e: a picked task can be locked to its day.
   // 2026-10-17: and split ("3 crochet bracelets" into three), or made to
   // repeat. A repeat that's picked can be stopped.
