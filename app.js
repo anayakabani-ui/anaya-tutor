@@ -4891,7 +4891,7 @@ function drawSync() {
     ? "Laptop last synced " + clock12(state.meta.last_sync)
     : "Waiting for the laptop";
   $("sync-status").textContent = cloudGuard.full   // 2026-10-24d
-    ? "The cloud's free limit is used up for today, so this page has stopped asking it (asking again and again was using it up). It looks again every 20 minutes. Everything's still on your laptop."
+    ? "The cloud's free limit is used up till about " + cloudResetWords(new Date()) + ". This page is showing what this browser already had, and it looks again every 20 minutes. Changes you make wait and go up when it's back. The tutor on your laptop works as normal."
     : syncStatus(state.asked, state.meta, Date.now());
   // 2026-10-17b: which website this is.
   if ($("site-version")) $("site-version").textContent = "Website " + APP_VERSION;
@@ -6941,7 +6941,7 @@ function start() {
     stops.forEach((stop) => stop());
     stops = [];
     cloud = null;
-    cloudGuard.user = null; cloudGuard.on = false; cloudGuard.full = false;   // 2026-10-24d
+    cloudGuard.user = null; cloudGuard.on = false; cloudGuard.full = false; cloudGuard.cached = false;   // 2026-10-24d, 30d
     show("signin", !user);
     show("app", Boolean(user));
     if (!user) return;
@@ -6957,21 +6957,36 @@ function start() {
     // listener is stopped and nothing is asked till it looks again 20
     // minutes later. One read every 5 minutes otherwise.
     cloudGuard.user = user;
-    cloudGuard.attach = () => attachAll(base);
+    cloudGuard.attach = (fromCache) => attachAll(base, fromCache);
     cloudGuard.detach = () => { stops.forEach((stop) => stop()); stops = []; };
     cloudCheck(true);
   });
-  function attachAll(base) {
-    const listen = (name, key) => stops.push(onSnapshot(collection(db, base + name), (snap) => {
+  function attachAll(base, fromCache) {
+    // 2026-10-30d: "and so NOTHING works? what. i just REFRESHED THE PAGE BY
+    // ACCIDENT". With the cloud full, a fresh page had nothing: every
+    // listener was kept off. Now they go on reading only what this browser
+    // already has (Firestore's own copy on the device), which costs the
+    // cloud nothing. When the cloud's back they go on properly again.
+    const how = fromCache ? { source: "cache" } : {};
+    const listen = (name, key) => stops.push(onSnapshot(collection(db, base + name), how, (snap) => {
       state[key] = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       drawAll();
     }, () => { $("status").textContent = "Can't reach the cloud right now"; }));
     listen("tasks", "tasks");
     listen("exams", "exams");
     listen("timetable", "timetable");
-    listen("youtube_visits", "visits");
-    listen("reflections", "reflections");
-    listen("review_asks", "asks");
+    // 2026-10-30d: the cloud ran out again (17:12). These kept every
+    // document they'd ever had, read again on every fresh page. Only what
+    // the page shows now: five weeks (like her ticks), and two days of
+    // 20 minute questions (only today's is ever asked).
+    const since = (field, days) => (name, key) => stops.push(onSnapshot(
+      query(collection(db, base + name), where(field, ">=", addDayIso(isoDay(new Date()), -days))), how, (snap) => {
+        state[key] = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        drawAll();
+      }, () => { $("status").textContent = "Can't reach the cloud right now"; }));
+    since("day", HISTORY_SITE_DAYS)("youtube_visits", "visits");
+    since("day", HISTORY_SITE_DAYS)("reflections", "reflections");
+    since("at", 2)("review_asks", "asks");
     // Tell the laptop where this web app lives, once per sign in.
     touchInbox().catch(() => {});
     // Opened from the tutor's "Review on the website": go to that tab.
@@ -6989,45 +7004,45 @@ function start() {
     listen("classroom_work", "work");
     listen("calendar_made", "made");
     listen("review_log", "lessons");
-    listen("usage", "usage");
+    since("day", HISTORY_SITE_DAYS)("usage", "usage");      // 2026-10-30d
     listen("rewards", "rewards");
-    stops.push(onSnapshot(doc(db, base + "live/bank"), (snap) => {
+    stops.push(onSnapshot(doc(db, base + "live/bank"), how, (snap) => {
       state.bank = snap.exists() ? snap.data() : null;
       drawRewards();
     }));
     // 2026-10-23: the cloud started turning the laptop away ("429 Too Many
     // Requests"). Every window opened read all of her ticks back to 120 days
     // (over 1100 of them). The site only ever shows the last few weeks.
-    stops.push(onSnapshot(query(collection(db, base + "task_history"), where("day", ">=", addDayIso(isoDay(new Date()), -HISTORY_SITE_DAYS))), (snap) => {
+    stops.push(onSnapshot(query(collection(db, base + "task_history"), where("day", ">=", addDayIso(isoDay(new Date()), -HISTORY_SITE_DAYS))), how, (snap) => {
       state.history = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       drawAll();
     }, () => { $("status").textContent = "Can't reach the cloud right now"; }));
     listen("task_snapshots", "snapshots");
     listen("calendar_writes", "writes");
-    stops.push(onSnapshot(doc(db, base + "live/focus"), (snap) => {
+    stops.push(onSnapshot(doc(db, base + "live/focus"), how, (snap) => {
       state.focus = snap.exists() ? snap.data() : null;
       drawSubjects();
     }));
-    stops.push(onSnapshot(doc(db, base + "live/google"), (snap) => {
+    stops.push(onSnapshot(doc(db, base + "live/google"), how, (snap) => {
       state.google = snap.exists() ? snap.data() : null;
       drawSchool();
     }));
-    stops.push(onSnapshot(doc(db, base + "days/" + isoDay(new Date())), (snap) => {
+    stops.push(onSnapshot(doc(db, base + "days/" + isoDay(new Date())), how, (snap) => {
       state.day = snap.exists() ? snap.data() : null;
       drawAll();
     }));
-    stops.push(onSnapshot(doc(db, base + "live/note"), (snap) => {
+    stops.push(onSnapshot(doc(db, base + "live/note"), how, (snap) => {
       state.live = snap.exists() ? snap.data() : null;
     }));
     // 2026-10-10q: every day's list, and her notes.
-    stops.push(onSnapshot(doc(db, base + "live/alldays"), (snap) => {
+    stops.push(onSnapshot(doc(db, base + "live/alldays"), how, (snap) => {
       state.alldays = snap.exists() ? snap.data() : null;
       drawTasks(); drawCalendarSoft(); drawPage();
       try { treatsFromLaptop(); } catch (error) { /* never stops the page */ }   // 2026-10-21
       try { carryTreatsFromLaptop(); } catch (error) { /* never stops the page */ }   // 2026-10-23
       try { sortFromLaptop(); } catch (error) { /* never stops the page */ }   // 2026-10-24e
     }));
-    stops.push(onSnapshot(collection(db, base + "pages"), (snap) => {   // 2026-10-19i
+    stops.push(onSnapshot(collection(db, base + "pages"), how, (snap) => {   // 2026-10-19i
       const pages = {};
       snap.docs.forEach((d) => { pages[d.id] = d.data(); });
       state.pages = pages;
@@ -7036,27 +7051,40 @@ function start() {
       state.pagesIn = true;                 // 2026-10-24e
       try { sortFromLaptop(); } catch (error) { /* never stops the page */ }   // 2026-10-24e
     }));
-    stops.push(onSnapshot(doc(db, base + "live/notes"), (snap) => {
+    stops.push(onSnapshot(doc(db, base + "live/notes"), how, (snap) => {
       state.notes = snap.exists() ? snap.data() : null;
       drawNotes();
     }));
-    stops.push(onSnapshot(doc(db, base + "live/chat"), (snap) => {   // 2026-10-17
+    stops.push(onSnapshot(doc(db, base + "live/chat"), how, (snap) => {   // 2026-10-17
       state.chat = parseChat(snap.exists() ? snap.data() : null);
       state.chatSeen = true;
       state.chatWaiting = chatWaiting(state.chatWaiting, state.chat);
       drawTalk();
     }));
-    stops.push(onSnapshot(doc(db, base + "meta/desktop"), (snap) => {
+    stops.push(onSnapshot(doc(db, base + "meta/desktop"), how, (snap) => {
       state.meta = snap.exists() ? snap.data() : null;
       drawAll();
     }));
   }
 }
 
+// 2026-10-30d: when the free limit comes back: midnight in California,
+// in her time.
+function cloudResetWords(now) {
+  try {
+    const la = new Date(now.toLocaleString("en-US", { timeZone: "America/Los_Angeles" }));
+    const next = new Date(la); next.setHours(24, 0, 0, 0);
+    const back = new Date(now.getTime() + (next - la));
+    const h = back.getHours(), m = back.getMinutes();
+    return ((h + 11) % 12 + 1) + (m ? ":" + String(m).padStart(2, "0") : "") + (h < 12 ? "am" : "pm") +
+      (back.getDate() !== now.getDate() ? " tomorrow" : "");
+  } catch (error) { return "tomorrow"; }
+}
+
 // ---- 2026-10-24d: the cloud's free limit. See cloudGuard in start().
 const CLOUD_PROBE_MS = 5 * 60000;      // a look at one document this often
 const CLOUD_PAUSE_MS = 20 * 60000;     // when it's full, wait this long
-const cloudGuard = { user: null, attach: null, detach: null, on: false, full: false, next: 0, busy: false };
+const cloudGuard = { user: null, attach: null, detach: null, on: false, full: false, next: 0, busy: false, cached: false };
 async function cloudProbe(user) {
   // One document, straight from the server: "ok", "full" (429 / quota) or
   // "off" (no network, or it couldn't tell). Never throws.
@@ -7083,11 +7111,17 @@ async function cloudCheck(first) {
   g.busy = false;
   if (!g.user) return;
   if (said === "full") {
-    if (g.on && g.detach) g.detach();
-    g.on = false; g.full = true; g.next = Date.now() + CLOUD_PAUSE_MS;
+    // 2026-10-30d: off the cloud, onto this browser's own copy.
+    if (!g.cached) {
+      if (g.on && g.detach) g.detach();
+      g.on = false; g.cached = true;
+      if (g.attach) g.attach(true);
+    }
+    g.full = true; g.next = Date.now() + CLOUD_PAUSE_MS;
   } else {
     g.full = false; g.next = Date.now() + CLOUD_PROBE_MS;
-    if (!g.on && g.attach) { g.on = true; g.attach(); }
+    if (g.cached && g.detach) { g.detach(); g.cached = false; }
+    if (!g.on && g.attach) { g.on = true; g.attach(false); }
   }
   drawSync();
 }
