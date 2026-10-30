@@ -2741,11 +2741,20 @@ function drawBank(box, found, pick, where) {
 // Clear saves first, then empties the bank. Nothing is ever lost: the copy
 // has Restore. Two presses for Clear (Ctrl+click skips the second).
 let bankArmed = null;
+// 2026-10-30: "save and clear doesnt work". The laptop's tutor hadn't been
+// restarted since v94, so it threw these away. Now the page says so
+// instead of saying "Saving" and nothing happening.
+const LAPTOP_OLD_WORDS = "The tutor on your laptop needs a Restart first (its Restart button). Then press this again.";
+function laptopTooOld() {
+  if (!state.alldays) return false;
+  try { const f = allDays(state.alldays); return Boolean(f) && !f.banksOk; } catch (error) { return false; }
+}
 function bankActions(found, mineLists) {
   const bar = el("div", "bank-actions");
   const saves = (found && found.saves) || [];
   const said = (words) => { state.calSaid = words; drawCalendar(); };
   const save = button("Save bank", "quiet bank-save", () => {
+    if (laptopTooOld()) { said(LAPTOP_OLD_WORDS); return; }
     sendEdit({ kind: "bank_save", clear: false });
     said("Saving a copy of the bank. It shows under Saved copies in a few seconds.");
   });
@@ -2753,6 +2762,7 @@ function bankActions(found, mineLists) {
   const key = "bank-clear";
   const armed = Boolean(bankArmed && bankArmed.key === key && Date.now() < bankArmed.until);
   const clear = button(armed ? "Sure? Save and clear" : "Save and clear", "quiet bank-clear" + (armed ? " armed" : ""), (e) => {
+    if (laptopTooOld()) { bankArmed = null; said(LAPTOP_OLD_WORDS); return; }
     if ((e && (e.ctrlKey || e.metaKey || e.shiftKey)) || armed) {
       bankArmed = null;
       sendEdit({ kind: "bank_save", clear: true });
@@ -2780,6 +2790,7 @@ function bankActions(found, mineLists) {
       const row = el("div", "bank-save-row");
       row.append(el("span", "bank-save-at", one.at + " \u00b7 " + one.count + (one.count === 1 ? " task" : " tasks") + (one.cleared ? " \u00b7 cleared" : "")));
       const back = button("Restore", "quiet", () => {
+        if (laptopTooOld()) { said(LAPTOP_OLD_WORDS); return; }
         sendEdit({ kind: "bank_restore", id: String(one.id) });
         said("Putting that copy back in the bank.");
       });
@@ -2828,6 +2839,7 @@ function newListForm(mineLists) {
     const clash = Object.keys(mineLists).concat(bankTabs(withMoves(allDays(state.alldays), state.moves).get(BANK) || []).map((t) => t.name))
       .some((n) => n.toLowerCase() === name.toLowerCase());
     if (clash) { state.calSaid = "There's already a list called " + name + "."; drawCalendar(); return; }
+    if (laptopTooOld()) { state.calSaid = LAPTOP_OLD_WORDS; drawCalendar(); return; }
     state.listsWaiting[name] = f.colour;
     sendEdit({ kind: "list_new", list: name, colour: f.colour });
     state.listForm = null;
@@ -2851,6 +2863,7 @@ function listColourBar(name, mineLists) {
   dot.setAttribute("aria-expanded", String(open));
   wrap.append(dot);
   if (open) wrap.append(swatchRow(now, (c) => {
+    if (laptopTooOld()) { state.colourFor = ""; state.calSaid = LAPTOP_OLD_WORDS; drawCalendar(); return; }
     state.colourWaiting[name] = c;
     sendEdit({ kind: "list_colour", list: name, colour: c });
     state.colourFor = "";
