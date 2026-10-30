@@ -1398,6 +1398,10 @@ export function allDays(live) {
            // 2026-10-29: her own bank lists (name: colour), the saved banks and the revision sessions
            lists: held.lists && typeof held.lists === "object" && !Array.isArray(held.lists) ? held.lists : {},
            saves: (Array.isArray(held.saves) ? held.saves : []).filter((x) => x && x.id),
+           // 2026-10-30: "save and clear doesnt work". The laptop was still on
+           // the tutor from before v94 (no Restart since), so it dropped the
+           // new edits without a word. Only a laptop that knows them sends "saves".
+           banksOk: Array.isArray(held.saves),
            revision: (Array.isArray(held.revision) ? held.revision : []).filter((r) => r && /^\d{4}-\d{2}-\d{2}$/.test(String(r.day || ""))) };   // 2026-10-24e: Sort into groups from the laptop (sortOf reads it)
 }
 
@@ -1547,7 +1551,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v94";   // 2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81)
+export const APP_VERSION = "v95";   // 2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81))
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
