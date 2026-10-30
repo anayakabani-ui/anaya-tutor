@@ -48,7 +48,7 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          roundDown5, flowExtend, flowAfterDone, flowSwitch, flowBreak, manyTimes,
          spinPick, spinTurn, SPIN_COLOURS, SPIN_MOST,
          carryOf, treatsCarry, carryWords, spinGroups, SPIN_OTHER, pickableLines,
-         spinPrioGroups, SPIN_PRIO_COLOURS, sortOf, prevPrioDay, importPrio, sortPrio } from "./logic.js";   // 2026-10-23   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
+         spinPrioGroups, SPIN_PRIO_COLOURS, sortOf, prevPrioDay, importPrio, sortPrio, quickStars, quickPick } from "./logic.js";   // 2026-10-23   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
 
 const $ = (id) => document.getElementById(id);
 // 2026-10-18b: a line's subject, by its words, from the bank's subject lists.
@@ -133,7 +133,7 @@ const state = { tasks: [], exams: [], timetable: [], visits: [], day: null, meta
                 // (id -> {day, title, start, end, atMs}); the one being
                 // renamed; tasks typed onto a day or into the bank.
                 eventsEdited: new Map(), calRename: "", calAdding: "", addsWaiting: [],
-                goalsWaiting: new Map(),
+                goalsWaiting: new Map(), quickWaiting: [],
                 // 2026-10-21f: where the bank sits, how wide, its scroll; a
                 // task being put between two; the task she's on (flow).
                 bankDock: recall("tutor-bank-dock", "right"), bankW: Number(recall("tutor-bank-width", 340)) || 340, bankScroll: 0,
@@ -6116,6 +6116,7 @@ function pageNowCard(day, lines, times, found) {
       }),
       button("Pick something else", "quiet", () => { page.nowChoose = !page.nowChoose; drawPage(); }),
       spinButton(day),
+      quickWinButton(day, found, pick.raw),
       button("Not today", "quiet", () => {
         page.nowRaw = null;
         nowSteer(pick.raw);
@@ -6152,7 +6153,11 @@ function pageNowCard(day, lines, times, found) {
     bar.append(go);
     card.append(bar);
   }
-  const wrap = el("div", "now-blocks");
+  // 2026-10-30c: "a quick win option where i can just multiselect quick
+  // wins and they have a star". Quick wins: press the easy ones, then Star.
+  const stars = quickStars(found, state.quickWaiting, Date.now());
+  card.append(quickWinBar(day, live, stars));
+  const wrap = el("div", "now-blocks" + (page.qwPick ? " qw-picking" : ""));
   NOW_PRIOS.forEach(([key, label]) => {
     const list = cols[key] || [];
     const b = el("div", "now-block prio-" + key);
@@ -6170,10 +6175,20 @@ function pageNowCard(day, lines, times, found) {
     });
     list.forEach((l) => {
       const item = el("div", "now-item");
-      const chip = button("", "now-chip" + (pick && l.raw === pick.raw ? " on" : ""), () => {
+      const starred = stars.has(String(l.raw).trim().toLowerCase());      // 2026-10-30c
+      const chosen = page.qwPick && page.qwSel.has(l.raw);
+      const chip = button("", "now-chip" + (pick && l.raw === pick.raw ? " on" : "") + (chosen ? " qw-chosen" : ""), () => {
+        if (page.qwPick) {                       // 2026-10-30c: picking quick wins
+          if (page.qwSel.has(l.raw)) page.qwSel.delete(l.raw); else page.qwSel.add(l.raw);
+          drawPage();
+          return;
+        }
         page.nowRaw = l.raw; page.nowChoose = false; nowSteer(l.raw); drawPage();
       });
-      chip.append(dot(l.raw), document.createTextNode(lineLabel(l.raw)));
+      if (page.qwPick) chip.setAttribute("aria-pressed", String(Boolean(chosen)));
+      chip.append(dot(l.raw));
+      if (starred) { const st = el("span", "qw-star", "\u2605"); st.title = "Quick win"; st.setAttribute("aria-label", "Quick win"); chip.append(st); }
+      chip.append(document.createTextNode(lineLabel(l.raw)));
       chip.draggable = true;
       chip.title = "Press to do it now. Drag it to another column.";
       chip.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/plain", l.raw); e.dataTransfer.effectAllowed = "move"; });
@@ -6249,6 +6264,67 @@ function pageNowCard(day, lines, times, found) {
     card.append(other);
   }
   return card;
+}
+
+// ---- 2026-10-30c: quick wins. "if im procrastinating/havent done anything
+// in ages, or if i just wasted some time, it can just suggest that and ill
+// be able to get it off my chest and yk, get into the swing of it". Starred
+// here (the laptop keeps them: edit quick_win), suggested by Quick win on
+// the Up next bar, and by the laptop on its own.
+function quickWinBar(day, live, stars) {
+  const bar = el("div", "qw-bar");
+  if (!page.qwSel) page.qwSel = new Set();
+  if (!page.qwPick) {
+    const n = live.filter((l) => stars.has(String(l.raw).trim().toLowerCase())).length;
+    const go = button("\u2605 Quick wins" + (n ? " (" + n + ")" : ""), "quiet qw-open", () => {
+      page.qwPick = true;
+      page.qwSel = new Set(live.filter((l) => stars.has(String(l.raw).trim().toLowerCase())).map((l) => l.raw));
+      page.said = "Press the quick, easy ones, then Save. Starred ones get suggested when you're stuck.";
+      drawPage();
+    });
+    go.title = "Pick your quick wins: easy tasks to get you going when you're stuck";
+    bar.append(go);
+    return bar;
+  }
+  const n = page.qwSel.size;
+  bar.classList.add("on");
+  bar.append(el("span", "qw-hint", n ? n + " picked" : "Press the quick, easy ones"),
+    button("Save", "qw-save", () => {
+      const was = live.filter((l) => stars.has(String(l.raw).trim().toLowerCase())).map((l) => l.raw);
+      const on = [...page.qwSel];
+      const off = was.filter((r) => !page.qwSel.has(r));
+      page.qwPick = false;
+      if (laptopQuickOld()) { page.said = LAPTOP_OLD_WORDS; drawPage(); return; }
+      const atMs = Date.now();
+      if (on.length) { state.quickWaiting.push({ texts: on, on: true, atMs }); sendEdit({ kind: "quick_win", texts: on, on: true }); }
+      if (off.length) { state.quickWaiting.push({ texts: off, on: false, atMs }); sendEdit({ kind: "quick_win", texts: off, on: false }); }
+      page.said = on.length ? "\u2605 " + on.length + (on.length === 1 ? " quick win" : " quick wins") + ". When you're stuck, press Quick win (or the tutor will hand you one)."
+        : "No quick wins starred.";
+      drawPage();
+    }),
+    button("Cancel", "quiet", () => { page.qwPick = false; page.said = ""; drawPage(); }));
+  return bar;
+}
+
+function laptopQuickOld() {
+  if (!state.alldays) return false;
+  try { const f = allDays(state.alldays); return Boolean(f) && !f.quickOk; } catch (error) { return false; }
+}
+
+function quickWinButton(day, found, onRaw) {
+  const stars = quickStars(found, state.quickWaiting, Date.now());
+  if (!stars.size) return "";
+  const b = button("\u2605 Quick win", "quiet qw-go", () => {
+    const now = new Date();
+    const hit = quickPick((found && found.days) || [], day, stars, onRaw);
+    if (!hit) { page.said = "No quick wins left. Star some more with Quick wins."; drawPage(); return; }
+    if (hit.day !== day) moveLine({ text: hit.raw, from: hit.day }, day);
+    page.nowRaw = hit.raw; page.nowChoose = false; nowSteer(hit.raw);
+    page.said = "Quick win: \u201c" + lineLabel(hit.raw) + "\u201d" + (hit.day !== day ? " (brought over from " + dayHead(hit.day, now) + ")" : "") + ". Get it off your chest, then you're rolling.";
+    drawPage();
+  });
+  b.title = "Stuck, or just wasted some time? One of your starred quick wins to get going";
+  return b;
 }
 
 // ---- 2026-10-22c: the spinny wheel. Today's open tasks round a wheel; it
