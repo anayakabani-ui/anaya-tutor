@@ -1243,3 +1243,11 @@ button.spin-again-in { background: #14B8A6; }
 .rev-line.rev-drag:active { cursor: grabbing; }
 .rev-ask { flex-wrap: wrap; gap: 8px; align-items: center; }
 .rev-ask .plan-title { margin: 0; flex: 1 1 220px; }
+
+/* 2026-10-30c: quick wins, starred */
+.qw-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 8px; }
+.qw-bar.on { padding: 6px 10px; border-radius: 12px; background: color-mix(in srgb, var(--accent, #2f6fde) 8%, transparent); }
+.qw-hint { font-size: 0.9em; opacity: 0.8; margin-right: auto; }
+.qw-star { color: #F2A93B; margin-right: 4px; font-size: 0.95em; }
+.now-blocks.qw-picking .now-chip { outline: 1px dashed color-mix(in srgb, currentColor 30%, transparent); }
+.now-chip.qw-chosen { outline: 2px solid #F2A93B !important; background: color-mix(in srgb, #F2A93B 12%, transparent); }
