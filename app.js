@@ -652,7 +652,15 @@ function saveTreats(patch) {
 // yayayay". Every finish anywhere on the site: a burst from where she
 // pressed and a word that floats up.
 const CHEERS = ["Yay!", "Yayayay!", "Done!", "Nice one!", "Woo!", "Yesss!", "Look at you go!", "Get in!", "Smashed it!"];
+// 2026-10-30e: "i click it once, it gives it twice" (her screenshot: two
+// "Nice one!" and two bursts). One cheer at a time: a second within
+// CHEER_GAP_MS is the same finish, whatever sent it.
+const CHEER_GAP_MS = 900;
+let cheerAt = 0;
 function cheer() {
+  if (Date.now() - cheerAt < CHEER_GAP_MS) return false;
+  cheerAt = Date.now();
+  document.querySelectorAll(".cheer").forEach((w) => w.remove());
   const x = pointerAt.x >= 0 ? pointerAt.x : window.innerWidth / 2;
   const y = pointerAt.y >= 0 ? pointerAt.y : window.innerHeight / 2;
   confetti(90, x, y, 2.4);
@@ -662,9 +670,14 @@ function cheer() {
   word.setAttribute("aria-hidden", "true");
   document.body.append(word);
   setTimeout(() => word.remove(), 1400);
+  return true;
 }
+let celebrated = { raw: "", at: 0 };
 function celebrateTick(raw) {
   // A small burst for every tick, from where she pressed if we know it.
+  // 2026-10-30e: the same tick twice in a row is one tick.
+  if (celebrated.raw === raw && Date.now() - celebrated.at < 3000) return;
+  celebrated = { raw, at: Date.now() };
   cheer();
   const today = isoDay(new Date());
   const t = treatsData();
