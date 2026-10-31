@@ -1554,7 +1554,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v98";   // 2026-10-30d: was v97 (2026-10-30c: was v96 (2026-10-30b: was v95 (2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81)))))
+export const APP_VERSION = "v99";   // 2026-10-30e: was v98 (2026-10-30d: was v97 (2026-10-30c: was v96 (2026-10-30b: was v95 (2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81))))))
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
