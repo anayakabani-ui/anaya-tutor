@@ -1554,7 +1554,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v99";   // 2026-10-30e: was v98 (2026-10-30d: was v97 (2026-10-30c: was v96 (2026-10-30b: was v95 (2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81))))))
+export const APP_VERSION = "v100";   // 2026-11-06c: was v99 (2026-10-30e: was v98 (2026-10-30d: was v97 (2026-10-30c: was v96 (2026-10-30b: was v95 (2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81)))))))
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -1809,6 +1809,24 @@ export function settlePicks(picks, found, nowMs) {
     (p.hadAll !== undefined ? totalCount(found, p.text) <= p.hadAll : pickCount(found, p.to, p.text) <= p.had));
 }
 // What the laptop keeps of a typed task: "[10]" on the end is its worth.
+// 2026-11-06c: "[3] make revision sheet a4 module #" is three lines, the
+// number where the # is (no # and it goes on the end); "[unlim] ..." is
+// number 1, and the laptop adds the next when it's ticked. Same as the
+// laptop's numbered_parse. null when it isn't one.
+export function numberedLines(text) {
+  const found = String(text || "").match(/^\s*\[\s*(unlim(?:ited)?|\d{1,2})\s*\]\s*(\S.*)$/i);
+  if (!found) return null;
+  let words = found[2].trim();
+  if (!words.includes("#")) {
+    const tail = words.match(/\s*\[\d{1,3}\]\s*$/);
+    words = tail ? words.slice(0, tail.index) + " #" + tail[0] : words + " #";
+  }
+  const one = (n) => words.replace("#", String(n)).replace(/\s+/g, " ");
+  if (/^unlim/i.test(found[1])) return { lines: [one(1)], unlim: true };
+  const n = Math.min(30, Number(found[1]));
+  if (n < 1) return null;
+  return { lines: Array.from({ length: n }, (_, i) => one(i + 1)), unlim: false };
+}
 export const typedWords = (text) => String(text || "").replace(/\s+/g, " ").trim().replace(/\s*\[\s*\d{1,3}\s*\]\s*$/, "").trim();
 export function withPicks(found, picks) {
   if (!found || !(picks || []).length) return found;
