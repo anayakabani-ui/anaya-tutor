@@ -31,7 +31,7 @@ import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUnt
          TAB_GROUPS, TOP_TABS, tabName, tabOnTop, startTab, tabStep, lessonReal, autoPoints, overnightWords,
          rewardUse, rewardPiles,
          allDays, dayKey, dayLines, dayHead, allDaysCount, settleDays,
-         CAL_VIEWS, CAL_FEW, addMove, BANK, BANK_PICK, pickCount, settlePicks, withPicks, totalCount, typedWords, PICK_LEASTS, bankTabs, pickLine, withMoves, calendarDays,
+         CAL_VIEWS, CAL_FEW, addMove, BANK, BANK_PICK, pickCount, settlePicks, withPicks, totalCount, typedWords, numberedLines, PICK_LEASTS, bankTabs, pickLine, withMoves, calendarDays,
          HOUR_PX, ZOOMS, setHourPx, timeSnap, pickName, CAL_LAYOUTS, clockWords, minutesOf, hhmm, timeParts, timeSpan, taskLength, lineLabel, boxHits, shiftTimes, dropTime, mergedTimes, timeColumn, firstScroll, scrollFloor, CAL_LOCK_HOUR, settleSwaps, swapSig, calendarStep, calendarTitle, calendarCells,
          moveProblem, settleMoves, notesIncoming, noteVersion,
          splitLine, parseChat, chatWaiting, APP_VERSION, nowScroll, eventAfterDrag,
@@ -1488,17 +1488,24 @@ function addTaskBox(day, list) {
     return wrap;
   }
   const input = el("input", "add-task-input");
-  input.placeholder = list ? "Add to " + list + " ([10] on the end = its worth)" : "New task ([10] on the end = its worth)";
+  // 2026-11-06c: "[3] ... #" at the start makes numbered copies.
+  input.placeholder = list ? "Add to " + list + " ([3] at the start = 3 numbered, [10] on the end = worth)"
+    : "New task ([3] at the start = 3 numbered, [10] on the end = worth)";
+  input.title = "[3] make sheet module # makes module 1, 2, 3. [unlim] makes module 1, and the next one comes when it's ticked. [10] on the end is its worth.";
   input.maxLength = 300;
   const send = () => {
     const text = input.value.trim();
     state.calAdding = "";
     if (!text) { drawCalendar(); return; }
     const loaded = allDays(state.alldays);
-    const words = typedWords(text);
-    state.picksWaiting = state.picksWaiting.concat([{ text: words, to: list ? BANK : day, list: list || "",
-      had: pickCount(loaded, day, words), hadAll: totalCount(loaded, words), atMs: Date.now() }]);
-    state.calSaid = "Added \u201c" + words + "\u201d. You can drag it now; it's faded till the laptop has it.";
+    const many = numberedLines(text);                   // 2026-11-06c
+    const all = many ? many.lines.map(typedWords) : [typedWords(text)];
+    const words = all[0];
+    state.picksWaiting = state.picksWaiting.concat(all.map((w) => ({ text: w, to: list ? BANK : day, list: list || "",
+      had: pickCount(loaded, day, w), hadAll: totalCount(loaded, w), atMs: Date.now() })));
+    state.calSaid = many ? "Added " + (many.unlim ? "\u201c" + words + "\u201d (the next one comes when it's ticked)"
+        : all.length + ": \u201c" + words + "\u201d to \u201c" + all[all.length - 1] + "\u201d") + "."
+      : "Added \u201c" + words + "\u201d. You can drag it now; it's faded till the laptop has it.";
     drawCalendar();
     sendEdit(list ? { kind: "bank_add", text, list } : { kind: "day_add", day, text });
   };
