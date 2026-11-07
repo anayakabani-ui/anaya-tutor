@@ -12,7 +12,7 @@ import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut }
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
          collection, doc, onSnapshot, addDoc, setDoc, deleteDoc, getDocs, query, orderBy, where }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { noteLines, todayLines, settleTicks, FILE_TYPES, isoDay, isoNow, daysUntil, clock12, dayText, minutesText,
+import { noteLines, todayLines, todayLook, TODAY_GIFT, settleTicks, FILE_TYPES, isoDay, isoNow, daysUntil, clock12, dayText, minutesText,
          sizeText, inDays, rankSubjects, youtubeToday, reflectionDue, reflectionTally,
          parseGeminiChat, guessSubject, chatProblem, fileState, SHELVES,
          groupPapers, minutesForMarks, clockText, timerLeft, examEdit, examWords,
@@ -188,12 +188,26 @@ function noteCard(lines, emptyText, onTick) {
   }
   lines.forEach((line) => {
     if (line.kind === "gap") { card.append(el("div", "note-gap")); return; }
-    if (line.kind === "head") { card.append(el("div", "note-head", line.text)); return; }
+    if (line.kind === "head") {
+      const head = el("div", "note-head", line.text);
+      const hue = line.subject ? subjectColour(line.subject) : "";      // 2026-11-07
+      if (hue) head.style.color = hue;
+      card.append(head);
+      return;
+    }
     const item = el("div", "note-line" + (line.done ? " done" : "") +
       (line.sub ? " sub" : "") + (line.group ? " group" : "") +
       (line.optional ? " optional" : "") + (line.bold ? " bold" : "") +
-      (line.fun ? " fun" : ""));
-    if (onTick) {
+      (line.fun ? " fun" : "") + (line.gift ? " gift" : "") + (line.locked ? " locked" : ""));
+    // 2026-11-07: Today's look. Its subject's colour, a counter's progress, a 🎁 locked.
+    const hue = line.subject ? subjectColour(line.subject) : "";
+    if (hue) { item.style.setProperty("--line-hue", hue); item.classList.add("hued"); }
+    if (line.locked && onTick) {
+      const lock = button("\u{1F512}", "box lock", () => onTick(line));
+      lock.setAttribute("aria-label", "Locked: " + line.text + ". Finish " + (line.waits || []).join(", ") + " first.");
+      lock.title = "Finish " + (line.waits || []).slice(0, 3).join(", ") + " first";
+      item.append(lock);
+    } else if (onTick) {
       const box = button("", "box" + (line.done ? " ticked" : ""), () => onTick(line));
       box.setAttribute("aria-label", (line.done ? "Untick " : "Tick ") + line.text);
       box.setAttribute("aria-pressed", String(Boolean(line.done)));
@@ -201,7 +215,18 @@ function noteCard(lines, emptyText, onTick) {
     } else {
       item.append(el("span", "box" + (line.done ? " ticked" : "")));
     }
-    item.append(el("span", "grow", (line.sub ? "> " : "") + line.text));
+    if (line.counter) {
+      const words = el("span", "grow");
+      words.append(document.createTextNode(line.counter.base + " "));
+      const bar = el("span", "count-bar");
+      const fill = el("span", "count-fill");
+      fill.style.width = Math.round(100 * line.counter.done / Math.max(1, line.counter.total)) + "%";
+      bar.append(fill);
+      words.append(bar, el("span", "count-num", line.counter.done + "/" + line.counter.total));
+      item.append(words);
+    } else {
+      item.append(el("span", "grow", (line.sub ? "> " : "") + line.text));
+    }
     if (line.due) item.append(el("span", "side" + (line.soon ? " soon" : ""), line.due));
     card.append(item);
   });
@@ -512,11 +537,12 @@ function savedFold() {
 function drawToday() {
   const box = $("tab-today");
   box.replaceChildren();
-  box.append(ringCard(), dayCard());
+  if (!hiding("ring")) box.append(ringCard());       // 2026-11-07: hideable
+  if (!hiding("hours")) box.append(dayCard());
   // 2026-10-19i: today's North Star, off the Day page.
   const starList = pageData(state.pages[isoDay(new Date())]).stars;   // 2026-10-19n: all of them
   const star = starList.map((s) => lineLabel(s.text)).join(", ");
-  if (star) {
+  if (hiding("star")) { /* hidden */ } else if (star) {
     const go = button("", "today-star", () => {
       page.day = isoDay(new Date());
       const tab = document.querySelector('button[data-tab="page"]');
@@ -534,17 +560,111 @@ function drawToday() {
     box.append(go);
   }
   settle();
-  const all = todayLines(state.day && state.day.lines, state.pendingToday);
-  box.append(viewChips(all, drawToday));
+  // 2026-11-07: her list's look (colours, counters, locked 🎁) and her hides.
+  let all = todayLook(state.day && state.day.lines, state.pendingToday);
+  if (hiding("fun")) all = all.filter((l) => l.kind !== "line" || (!l.fun && !l.gift));
+  if (!hiding("chips")) box.append(viewChips(all, drawToday));
+  if (state.todaySaid) box.append(el("p", "today-said", state.todaySaid));
   box.append(noteCard(viewLines(all, state.view),
-    "Nothing on Today yet. It fills in from the desktop tutor.", (line) => {
+    "Nothing on Today yet. Paste your list below, or type it in the desktop tutor.", (line) => {
+      if (line.locked) {
+        state.todaySaid = "Locked for now. Finish " + (line.waits || []).slice(0, 2).join(" and ") +
+          ((line.waits || []).length > 2 ? " (and " + (line.waits.length - 2) + " more)" : "") + " first.";
+        drawToday();
+        return;
+      }
+      state.todaySaid = "";
       const target = !line.done;
+      if (target && !replaying) setTimeout(() => celebrateTick(line.text), 0);
       state.pendingToday.set(line.text, target);
       state.madeAt.set("d:" + line.text, Date.now());
       drawToday();
       sendEdit({ kind: "today", text: line.text, done: target });
     }));
-  box.append(historyFold("today", "Today history"));
+  if (!hiding("paste")) box.append(todayPasteFold());
+  if (!hiding("history")) box.append(historyFold("today", "Today history"));
+}
+
+// 2026-11-07: her whole list for today, pasted in the way she writes it
+// ("> task", "'--> step", "> 1", "> 2" ...). The laptop lays it out.
+function todayPasteFold() {
+  return fold("today-paste", "Paste today's list", null, (inside) => {
+    inside.append(el("p", "muted", "> a task.   '--> a step under the one above.   > 1, > 2, > 3 under a line ending in : makes one line that counts (0/3). " +
+      "Rewards (play WarriorsGame, anything \u201cas a reward\u201d) get a " + TODAY_GIFT + " and unlock when what's above them is done. " +
+      "Add \u201cafter draw gift\u201d to one to unlock it after that list instead."));
+    const area = el("textarea", "today-paste");
+    area.rows = 8;
+    area.placeholder = "> FINISH case study\n> dt do theory\n> do smaller revision posters for chem:\n> 1\n> 2\n> play WarriorsGame";
+    area.value = state.todayPasteDraft || "";
+    area.addEventListener("input", () => { state.todayPasteDraft = area.value; });
+    const row = el("div", "choices");
+    row.append(button("Put it on Today", "", async () => {
+      const text = area.value.trim();
+      if (!text) return;
+      const ok = await sendEdit({ kind: "today_paste", text: text.slice(0, 8000) });
+      state.todaySaid = ok ? "Sent. It shows on Today in a few seconds while the tutor is open." : "Couldn't send that. Are you online?";
+      if (ok) state.todayPasteDraft = "";
+      drawToday();
+    }));
+    inside.append(area, row);
+  }, false);
+}
+
+// ---- 2026-11-07: "i want to be able to hide EVERYTHING in the pwa that there
+// is including fun stuff, notes, and tracking". Kept on this device.
+const HIDE_PARTS = [["ring", "Tracking: useful time ring"], ["hours", "Tracking: hour by hour"], ["star", "North Star button"],
+  ["chips", "Hide optional / Done at the bottom chips"], ["fun", "Fun and \u{1F381} lines"], ["paste", "Paste today's list box"],
+  ["history", "Today history"]];
+state.hide = recall("tutor-hide", {});
+function hiding(key) { return Boolean(state.hide && state.hide[key]); }
+function applyHides() {
+  document.querySelectorAll("#tabs button[data-tab], #top-tabs button[data-tab]").forEach((b) => {
+    b.hidden = b.dataset.tab !== "today" && hiding("tab:" + b.dataset.tab);
+  });
+  document.querySelectorAll("#tabs .side-head").forEach((head) => {
+    let next = head.nextElementSibling, any = false;
+    while (next && !next.classList.contains("side-head")) {
+      if (next.dataset && next.dataset.tab && !next.hidden) any = true;
+      next = next.nextElementSibling;
+    }
+    head.hidden = !any;
+  });
+  if (state.tab && state.tab !== "today" && hiding("tab:" + state.tab)) selectTab("today");
+}
+function hidePanel() {
+  const old = document.querySelector(".hide-panel");
+  if (old) { old.remove(); return; }
+  const panel = el("div", "hide-panel");
+  panel.setAttribute("role", "dialog");
+  panel.setAttribute("aria-label", "Show or hide");
+  const card = el("div", "hide-card");
+  card.append(el("p", "hide-title", "Show / hide"), el("p", "muted", "Ticked means hidden. Just on this device."));
+  const tick = (key, words) => {
+    const label = el("label", "hide-row");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = hiding(key);
+    box.addEventListener("change", () => {
+      state.hide = { ...state.hide, [key]: box.checked };
+      keep("tutor-hide", state.hide);
+      applyHides();
+      drawToday();
+    });
+    label.append(box, el("span", "", words));
+    return label;
+  };
+  card.append(el("p", "hide-group", "Pages"));
+  [...TOP_TABS, ...TAB_GROUPS.flatMap((g) => g.tabs)].filter(([k]) => k !== "today")
+    .forEach(([k, name]) => card.append(tick("tab:" + k, name)));
+  card.append(el("p", "hide-group", "On Today"));
+  HIDE_PARTS.forEach(([k, words]) => card.append(tick(k, words)));
+  const row = el("div", "choices");
+  row.append(button("Show everything", "soft", () => { state.hide = {}; keep("tutor-hide", {}); applyHides(); drawToday(); panel.remove(); hidePanel(); }),
+             button("Done", "", () => panel.remove()));
+  card.append(row);
+  panel.append(card);
+  panel.addEventListener("click", (e) => { if (e.target === panel) panel.remove(); });
+  document.body.append(panel);
 }
 
 // 2026-10-03r: "no, revert it for the tasks. it works but super janky and
@@ -6756,7 +6876,7 @@ function talkToBottom() {
 // 2026-10-07c: five pages along the top, the rest down the side. One page
 // shows at a time, as before, and which one is kept on this device. Menu
 // hides the side and brings it back (kept too); narrow, it's a drawer.
-const TAB_BUTTONS = "#tabs button, #top-tabs button";
+const TAB_BUTTONS = "#tabs button[data-tab], #top-tabs button[data-tab]";   // 2026-11-07: not the Show / hide button
 const narrow = () => window.matchMedia("(max-width: 819px)").matches;
 
 function selectTab(key, focus) {
@@ -6853,6 +6973,7 @@ function buildTabs() {
     nav.append(head);
     group.tabs.forEach(([key, name]) => nav.append(tabButton(key, name)));
   });
+  nav.append(button("Show / hide", "hide-open", () => hidePanel()));   // 2026-11-07
   const arrows = (forward, back) => (event) => {
     const by = event.key === forward ? 1 : event.key === back ? -1 : 0;
     if (!by || !event.target.dataset || !event.target.dataset.tab) return;
@@ -6883,6 +7004,7 @@ function buildTabs() {
   });
   window.addEventListener("resize", () => { if (!narrow()) sideOpen(false); else sideSays(); });
   selectTab(startTab(location.hash, recall("tutor-tab", "today")));
+  applyHides();
   sideSays();
 }
 
