@@ -109,6 +109,98 @@ export function todayLines(lines, pending) {
   });
 }
 
+// ---- 2026-11-07: Today the way she writes it (main.py today_from_paste).
+// "i want to be able to type in the following adn get it nicely formatted,
+// maybe with oclours, for my actual to-do list for TODAY". A counting line
+// "name (3/8)", a 🎁 reward locked till what's above it in its block is
+// done (or "after X"), a counting reward gets one go per finished group,
+// and a line's subject colour (a heading's lines take the heading's).
+export const TODAY_GIFT = "\u{1F381}";
+const COUNTER_RE = /^(.*\S)\s*\((\d{1,3})\/(\d{1,3})\)\s*$/;
+const SUBJECT_WORDS = [["design technology", "dt"], ["chemistry", "chemistry"], ["business", "business"], ["geography", "geography"],
+  ["biology", "biology"], ["physics", "physics"], ["french", "french"], ["english", "english"], ["maths", "maths"], ["math", "maths"],
+  ["chem", "chemistry"], ["busi", "business"], ["phys", "physics"], ["geog", "geography"], ["geo", "geography"], ["bio", "biology"],
+  ["eng", "english"], ["d&t", "dt"], ["dt", "dt"]];
+export function subjectOfWords(text) {
+  const low = String(text || "").toLowerCase();
+  const hit = SUBJECT_WORDS.find(([w]) => new RegExp("(^|[^a-z])" + w.replace(/[&]/g, "\\&") + "([^a-z]|$)").test(low));
+  return hit ? hit[1] : "";
+}
+export function counterOf(text) {
+  const m = String(text || "").trim().match(COUNTER_RE);
+  return m ? { base: m[1], done: Number(m[2]), total: Number(m[3]) } : null;
+}
+const isGift = (t) => String(t || "").trim().startsWith(TODAY_GIFT);
+const SINK_HEADS = new Set(["basics:", "namaz:", "meals:"]);
+function groupDone(lines, at) {
+  for (let i = at + 1; i < lines.length; i++) {
+    const t = String(lines[i].text || "").trim();
+    if (!t || t.endsWith(":")) break;
+    if (isGift(t)) continue;
+    if (!lines[i].done) return false;
+  }
+  return true;
+}
+export function groupsFinished(lines) {
+  let n = 0;
+  lines.forEach((l, i) => {
+    const t = String(l.text || "").trim();
+    if (t.endsWith(":")) { if (!SINK_HEADS.has(t.toLowerCase()) && groupDone(lines, i)) n += 1; return; }
+    const c = !isGift(t) && counterOf(t);
+    if (c && c.total > 0 && c.done >= c.total) n += 1;
+  });
+  return n;
+}
+// What a 🎁 line waits on: [] when it's free.
+export function giftWaits(lines, index) {
+  const texts = lines.map((l) => String(l.text || "").trim());
+  const text = texts[index] || "";
+  if (!isGift(text)) return [];
+  const c = counterOf(text);
+  if (c) return c.done >= c.total || groupsFinished(lines) > c.done ? [] : ["a whole group"];
+  const after = text.match(/\bafter\s+(.+?)\)?\s*$/i);
+  if (after) {
+    const want = after[1].replace(/^[\s()!.]+|[\s()!.]+$/g, "").toLowerCase();
+    for (let i = 0; i < texts.length; i++) {
+      const low = texts[i].toLowerCase().replace(/:$/, "").replace(/[\s!]+$/, "");
+      if (!low || i === index || !low.includes(want)) continue;
+      if (texts[i].endsWith(":")) return groupDone(lines, i) ? [] : [texts[i].slice(0, -1)];
+      return lines[i].done ? [] : [texts[i]];
+    }
+  }
+  let start = 0;
+  for (let i = 0; i < index; i++) if (!texts[i] || texts[i].endsWith(":")) start = i + 1;
+  const left = [];
+  for (let i = start; i < index; i++) {
+    const t = texts[i];
+    if (t && !t.endsWith(":") && !isGift(t) && !lines[i].done) left.push(t.replace(COUNTER_RE, "$1"));
+  }
+  return left;
+}
+// Today's lines with the look: subject colour, counter, gift, locked.
+export function todayLook(lines, pending) {
+  const raw = (lines || []).map((l) => {
+    const text = String(l.text || "").trim();
+    const waiting = pending || new Map();
+    return { text, done: waiting.has(text) ? waiting.get(text) : Boolean(l.done) };
+  });
+  const out = todayLines(lines, pending);
+  let inherit = "";
+  out.forEach((line, i) => {
+    if (line.kind === "gap") { inherit = ""; return; }
+    if (line.kind === "head") { inherit = subjectOfWords(line.text); line.subject = inherit; return; }
+    line.subject = subjectOfWords(line.text) || inherit;
+    line.counter = counterOf(line.text);
+    line.gift = isGift(line.text);
+    if (line.gift && !line.done) {
+      const waits = giftWaits(raw, i);
+      line.locked = waits.length > 0;
+      line.waits = waits;
+    }
+  });
+  return out;
+}
+
 // A tick she made here stops being "pending" once the laptop's copy agrees
 // with it, or after two minutes if the laptop never answers (so a box
 // can't stay ticked here forever while the laptop is off).
@@ -1554,7 +1646,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v100";   // 2026-11-06c: was v99 (2026-10-30e: was v98 (2026-10-30d: was v97 (2026-10-30c: was v96 (2026-10-30b: was v95 (2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81)))))))
+export const APP_VERSION = "v101";   // 2026-11-07: was v100 (2026-11-06c: was v99 (2026-10-30e: was v98 (2026-10-30d: was v97 (2026-10-30c: was v96 (2026-10-30b: was v95 (2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81))))))))
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
