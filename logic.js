@@ -151,23 +151,59 @@ export function groupsFinished(lines) {
   });
   return n;
 }
+// 2026-11-07b: "id like a more button-like expierence for linking all the
+// rewards that would be done in the website". The Link button writes
+// "(after A, B)" into the reward's words; the laptop reads the same.
+const AFTER_RE = /\(\s*after\s+([^()]*)\)|\bafter\s+([^()]+?)\s*$/i;
+export function giftLinks(text) {
+  const words = String(text || "").trim().replace(COUNTER_RE, "$1");
+  const m = words.match(AFTER_RE);
+  if (!m) return [];
+  return String(m[1] !== undefined ? m[1] : m[2] || "").split(/\s*[,+;]\s*/)
+    .map((w) => w.replace(/^[\s!.]+|[\s!.]+$/g, "").toLowerCase()).filter(Boolean);
+}
+// The reward's name without its links or count, to show.
+export function giftName(text) {
+  return String(text || "").trim().replace(COUNTER_RE, "$1").replace(AFTER_RE, "").replace(/\s+/g, " ").trim();
+}
+// Its words again with these links (none: back to "what's above it").
+export function giftWithLinks(text, links) {
+  const t = String(text || "").trim();
+  const c = counterOf(t);
+  let name = giftName(t);
+  if (!name.startsWith(TODAY_GIFT)) name = TODAY_GIFT + " " + name;
+  return name + (links.length ? " (after " + links.join(", ") + ")" : "") + (c ? " (" + c.done + "/" + c.total + ")" : "");
+}
+function linkState(lines, want, skip) {
+  for (let i = 0; i < lines.length; i++) {
+    const t = String(lines[i].text || "").trim();
+    if (i === skip || !t || isGift(t)) continue;
+    const low = t.replace(COUNTER_RE, "$1").toLowerCase().replace(/:$/, "").replace(/[\s!]+$/, "");
+    if (!low.includes(want)) continue;
+    if (t.endsWith(":")) return { found: true, done: groupDone(lines, i), words: t.slice(0, -1) };
+    const c = counterOf(t);
+    return { found: true, done: Boolean(lines[i].done) || Boolean(c && c.done >= c.total), words: t.replace(COUNTER_RE, "$1") };
+  }
+  return { found: false, done: true, words: want };
+}
 // What a 🎁 line waits on: [] when it's free.
 export function giftWaits(lines, index) {
   const texts = lines.map((l) => String(l.text || "").trim());
   const text = texts[index] || "";
   if (!isGift(text)) return [];
+  const links = giftLinks(text);
+  const states = links.map((w) => linkState(lines, w, index)).filter((st) => st.found);
   const c = counterOf(text);
-  if (c) return c.done >= c.total || groupsFinished(lines) > c.done ? [] : ["a whole group"];
-  const after = text.match(/\bafter\s+(.+?)\)?\s*$/i);
-  if (after) {
-    const want = after[1].replace(/^[\s()!.]+|[\s()!.]+$/g, "").toLowerCase();
-    for (let i = 0; i < texts.length; i++) {
-      const low = texts[i].toLowerCase().replace(/:$/, "").replace(/[\s!]+$/, "");
-      if (!low || i === index || !low.includes(want)) continue;
-      if (texts[i].endsWith(":")) return groupDone(lines, i) ? [] : [texts[i].slice(0, -1)];
-      return lines[i].done ? [] : [texts[i]];
+  if (c) {
+    if (c.done >= c.total) return [];
+    if (states.length) {
+      if (states.filter((st) => st.done).length > c.done) return [];
+      const open = states.filter((st) => !st.done).map((st) => st.words).slice(0, 3);
+      return open.length ? open : ["the next thing it's linked to"];
     }
+    return groupsFinished(lines) > c.done ? [] : ["a whole group"];
   }
+  if (links.length) return states.filter((st) => !st.done).map((st) => st.words);
   let start = 0;
   for (let i = 0; i < index; i++) if (!texts[i] || texts[i].endsWith(":")) start = i + 1;
   const left = [];
@@ -192,6 +228,7 @@ export function todayLook(lines, pending) {
     line.subject = subjectOfWords(line.text) || inherit;
     line.counter = counterOf(line.text);
     line.gift = isGift(line.text);
+    if (line.gift) { line.links = giftLinks(line.text); line.shown = giftName(line.text); }
     if (line.gift && !line.done) {
       const waits = giftWaits(raw, i);
       line.locked = waits.length > 0;
@@ -1646,7 +1683,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v101";   // 2026-11-07: was v100 (2026-11-06c: was v99 (2026-10-30e: was v98 (2026-10-30d: was v97 (2026-10-30c: was v96 (2026-10-30b: was v95 (2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81))))))))
+export const APP_VERSION = "v102";   // 2026-11-07b: was v101 (2026-11-07: was v100 (2026-11-06c: was v99 (2026-10-30e: was v98 (2026-10-30d: was v97 (2026-10-30c: was v96 (2026-10-30b: was v95 (2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81)))))))))
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
