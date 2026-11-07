@@ -12,7 +12,7 @@ import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut }
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
          collection, doc, onSnapshot, addDoc, setDoc, deleteDoc, getDocs, query, orderBy, where }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { noteLines, todayLines, todayLook, TODAY_GIFT, settleTicks, FILE_TYPES, isoDay, isoNow, daysUntil, clock12, dayText, minutesText,
+import { noteLines, todayLines, todayLook, TODAY_GIFT, giftWithLinks, giftName, counterOf, settleTicks, FILE_TYPES, isoDay, isoNow, daysUntil, clock12, dayText, minutesText,
          sizeText, inDays, rankSubjects, youtubeToday, reflectionDue, reflectionTally,
          parseGeminiChat, guessSubject, chatProblem, fileState, SHELVES,
          groupPapers, minutesForMarks, clockText, timerLeft, examEdit, examWords,
@@ -180,7 +180,7 @@ async function siteBeat() {
 setInterval(siteBeat, SITE_BEAT_MS);
 document.addEventListener("visibilitychange", () => { siteBeatAt = 0; siteBeat(); });
 
-function noteCard(lines, emptyText, onTick) {
+function noteCard(lines, emptyText, onTick, extra) {
   const card = el("div", "note");
   if (!lines.some((l) => l.kind === "line")) {
     card.append(el("p", "empty", emptyText));
@@ -217,7 +217,7 @@ function noteCard(lines, emptyText, onTick) {
     }
     if (line.counter) {
       const words = el("span", "grow");
-      words.append(document.createTextNode(line.counter.base + " "));
+      words.append(document.createTextNode((line.gift ? line.shown : line.counter.base) + " "));
       const bar = el("span", "count-bar");
       const fill = el("span", "count-fill");
       fill.style.width = Math.round(100 * line.counter.done / Math.max(1, line.counter.total)) + "%";
@@ -225,9 +225,10 @@ function noteCard(lines, emptyText, onTick) {
       words.append(bar, el("span", "count-num", line.counter.done + "/" + line.counter.total));
       item.append(words);
     } else {
-      item.append(el("span", "grow", (line.sub ? "> " : "") + line.text));
+      item.append(el("span", "grow", (line.sub ? "> " : "") + (line.gift ? line.shown : line.text)));
     }
     if (line.due) item.append(el("span", "side" + (line.soon ? " soon" : ""), line.due));
+    if (extra) extra(line, item);
     card.append(item);
   });
   return card;
@@ -561,7 +562,7 @@ function drawToday() {
   }
   settle();
   // 2026-11-07: her list's look (colours, counters, locked 🎁) and her hides.
-  let all = todayLook(state.day && state.day.lines, state.pendingToday);
+  let all = todayLook(renamedLines(state.day && state.day.lines), state.pendingToday);
   if (hiding("fun")) all = all.filter((l) => l.kind !== "line" || (!l.fun && !l.gift));
   if (!hiding("chips")) box.append(viewChips(all, drawToday));
   if (state.todaySaid) box.append(el("p", "today-said", state.todaySaid));
@@ -580,9 +581,118 @@ function drawToday() {
       state.madeAt.set("d:" + line.text, Date.now());
       drawToday();
       sendEdit({ kind: "today", text: line.text, done: target });
-    }));
+    }, giftExtra));
+  if (all.some((l) => l.kind === "line")) {
+    const row = el("div", "choices today-gift-row");
+    row.append(button(TODAY_GIFT + " Make rewards", "soft", () => rewardsPanel()));
+    box.append(row);
+  }
   if (!hiding("paste")) box.append(todayPasteFold());
   if (!hiding("history")) box.append(historyFold("today", "Today history"));
+}
+
+// ---- 2026-11-07b: "id like a more button-like expierence for linking all
+// the rewards that would be done in the website. the tutor would simply
+// reflect it". The words change here (a 🎁, "(after A, B)") and go to the
+// laptop as one rename; shown at once, till the laptop's copy says the same.
+state.pendingRename = new Map();
+function renamedLines(lines) {
+  const now = Date.now();
+  const have = new Set((lines || []).map((l) => String(l.text || "").trim()));
+  for (const [from, p] of state.pendingRename) {
+    if (have.has(p.to) || !have.has(from) || now - p.at > 120000) state.pendingRename.delete(from);
+  }
+  return (lines || []).map((l) => {
+    const t = String(l.text || "").trim();
+    const p = state.pendingRename.get(t);
+    return p ? { ...l, text: p.to } : l;
+  });
+}
+async function renameToday(from, to) {
+  if (!from || !to || from === to) return;
+  state.pendingRename.set(from, { to, at: Date.now() });
+  drawToday();
+  const ok = await sendEdit({ kind: "today_rename", from, to });
+  if (!ok) { state.pendingRename.delete(from); state.todaySaid = "Couldn't send that. Are you online?"; drawToday(); }
+}
+function giftExtra(line, item) {
+  if (!line.gift) return;
+  if (line.links && line.links.length) item.append(el("span", "gift-links", "after " + line.links.join(" \u00b7 ")));
+  item.append(button(line.links && line.links.length ? "Change" : "Link", "gift-link", () => linkPanel(line)));
+}
+function panelShell(title, words) {
+  const old = document.querySelector(".hide-panel");
+  if (old) old.remove();
+  const panel = el("div", "hide-panel");
+  panel.setAttribute("role", "dialog");
+  panel.setAttribute("aria-label", title);
+  const card = el("div", "hide-card");
+  card.append(el("p", "hide-title", title));
+  if (words) card.append(el("p", "muted", words));
+  panel.append(card);
+  panel.addEventListener("click", (e) => { if (e.target === panel) panel.remove(); });
+  document.body.append(panel);
+  return { panel, card };
+}
+// What unlocks this reward: tap the lists and tasks that earn it.
+function linkPanel(line) {
+  const all = todayLook(renamedLines(state.day && state.day.lines), state.pendingToday);
+  const count = counterOf(line.text);
+  const { panel, card } = panelShell("What unlocks " + giftName(line.text).replace(TODAY_GIFT, "").trim() + "?",
+    count ? "Each one you pick earns one go (" + count.total + " in all). Nothing picked: one go per whole list finished."
+      : "Pick what has to be done first. Nothing picked: everything above it in its block.");
+  let picked = (line.links || []).slice();
+  const chips = el("div", "link-chips");
+  const draw = () => {
+    chips.replaceChildren();
+    const add = (words, kind) => {
+      const key = words.toLowerCase().replace(/[\s!.]+$/, "");
+      const on = picked.some((p) => key.includes(p));
+      const chip = button((kind === "list" ? "\u2630 " : "") + words, "link-chip" + (on ? " on" : "") + (kind === "list" ? " list" : ""), () => {
+        picked = on ? picked.filter((p) => !key.includes(p)) : picked.concat([key]);
+        draw();
+      });
+      chip.setAttribute("aria-pressed", String(on));
+      chips.append(chip);
+    };
+    all.forEach((l) => {
+      if (l.kind === "head") add(l.text, "list");
+      else if (l.kind === "line" && !l.gift) add(l.counter ? l.counter.base : l.text, "line");
+    });
+  };
+  draw();
+  card.append(chips);
+  const row = el("div", "choices");
+  row.append(button("Save", "", () => { panel.remove(); renameToday(line.text, giftWithLinks(line.text, picked)); }),
+             button("Clear links", "soft", () => { picked = []; draw(); }),
+             button("Cancel", "soft", () => panel.remove()));
+  card.append(row);
+}
+// Tap a line to make it a reward (or stop it being one).
+function rewardsPanel() {
+  const { panel, card } = panelShell(TODAY_GIFT + " Make rewards", "Tap a line to make it a reward, tap again to undo. Then use Link on it to say what unlocks it.");
+  const chips = el("div", "link-chips");
+  const all = todayLook(renamedLines(state.day && state.day.lines), state.pendingToday);
+  all.filter((l) => l.kind === "line" && !l.done).forEach((l) => {
+    const chip = button(l.gift ? l.shown : l.text, "link-chip" + (l.gift ? " on" : ""), () => {
+      let to;
+      if (l.gift) {
+        const c = counterOf(l.text);
+        to = giftName(l.text).replace(TODAY_GIFT, "").trim() + (c ? " (" + c.done + "/" + c.total + ")" : "");
+      } else {
+        to = TODAY_GIFT + " " + l.text;
+      }
+      renameToday(l.text, to);
+      panel.remove();
+      rewardsPanel();
+    });
+    chip.setAttribute("aria-pressed", String(Boolean(l.gift)));
+    chips.append(chip);
+  });
+  card.append(chips);
+  const row = el("div", "choices");
+  row.append(button("Done", "", () => panel.remove()));
+  card.append(row);
 }
 
 // 2026-11-07: her whole list for today, pasted in the way she writes it
@@ -614,7 +724,7 @@ function todayPasteFold() {
 // is including fun stuff, notes, and tracking". Kept on this device.
 const HIDE_PARTS = [["ring", "Tracking: useful time ring"], ["hours", "Tracking: hour by hour"], ["star", "North Star button"],
   ["chips", "Hide optional / Done at the bottom chips"], ["fun", "Fun and \u{1F381} lines"], ["paste", "Paste today's list box"],
-  ["history", "Today history"]];
+  ["history", "Today history"], ["pagetrack", "Day page: Tracking (habits, mood, productivity)"]];
 state.hide = recall("tutor-hide", {});
 function hiding(key) { return Boolean(state.hide && state.hide[key]); }
 function applyHides() {
@@ -649,6 +759,7 @@ function hidePanel() {
       keep("tutor-hide", state.hide);
       applyHides();
       drawToday();
+      if (state.tab === "page") drawPage();
     });
     label.append(box, el("span", "", words));
     return label;
@@ -6748,7 +6859,8 @@ function drawPage() {
   if (day === today) { const cb = carryBar(found); if (cb) box.append(cb); }   // 2026-10-23
   if (day === today) { pageRollover(found, today); box.append(pageNowCard(day, lines, times, found)); }   // 2026-10-20d
   const top = el("div", "page-top");
-  top.append(pageStarCard(day, lines, data), pageTrackCard(day, data));
+  top.append(pageStarCard(day, lines, data));
+  if (!hiding("pagetrack")) top.append(pageTrackCard(day, data));     // 2026-11-07b
   box.append(top);
   const body = el("div", "page-body");
   const right = el("div", "page-right");
