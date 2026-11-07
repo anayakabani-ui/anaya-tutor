@@ -1273,3 +1273,12 @@ textarea.today-paste { width: 100%; box-sizing: border-box; font: inherit; font-
 .hide-row { justify-content: flex-start; text-align: left; font-weight: 500; }
 .hide-row input[type="checkbox"] { width: 18px; height: 18px; min-width: 0; flex: none; margin: 0; padding: 0; accent-color: var(--accent); }
 .hide-row span { flex: 1; text-align: left; }
+/* 2026-11-07b: linking rewards with buttons */
+.note-line .gift-links { font-size: 0.8rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
+.note-line .gift-link { padding: 3px 10px; font-size: 0.8rem; border-radius: 99px; background: var(--hover); color: var(--text); border: 0; cursor: pointer; }
+.link-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.link-chip { padding: 7px 12px; border-radius: 99px; border: 1px solid var(--hover); background: var(--bg); color: var(--text); cursor: pointer; font-size: 0.9rem; text-align: left; }
+.link-chip.list { font-weight: 700; }
+.link-chip.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.today-gift-row { justify-content: flex-end; margin: 6px 0 4px; }
+.today-gift-row button { flex: 0 0 auto; }
