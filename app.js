@@ -770,7 +770,8 @@ function hidePanel() {
   card.append(el("p", "hide-group", "On Today"));
   HIDE_PARTS.forEach(([k, words]) => card.append(tick(k, words)));
   const row = el("div", "choices");
-  row.append(button("Show everything", "soft", () => { state.hide = {}; keep("tutor-hide", {}); applyHides(); drawToday(); panel.remove(); hidePanel(); }),
+  row.append(button("Day page cards back where they were", "soft", () => { pageLayoutSave(PAGE_LAYOUT_START); drawPage(); }),   // 2026-11-10
+             button("Show everything", "soft", () => { state.hide = {}; keep("tutor-hide", {}); applyHides(); drawToday(); panel.remove(); hidePanel(); }),
              button("Done", "", () => panel.remove()));
   card.append(row);
   panel.append(card);
@@ -5500,16 +5501,28 @@ function pageStarCard(day, lines, data) {
     if (stars.some((s) => s.text.toLowerCase() === words.toLowerCase())) { drawPage(); return; }
     save(stars.concat([{ text: words, done: false }]));
   };
+  // 2026-11-10: "i cant easily pick out north stars for ALLLL tasks- it
+  // only shows a few". All of them (not the ticked ones, headings or bare
+  // numbers); typing in the box narrows them down.
   const chips = el("div", "page-star-picks");
-  open.filter((l) => !l.done && !stars.some((s) => s.text === l.raw)).slice(0, 12).forEach((l) => {
-    const chip = button(lineLabel(l.raw), "quiet", () => add(l.raw));
+  const pickable = open.filter((l) => !l.done && !l.sub && !/^>?\s*\d{1,3}$/.test(String(l.raw || "").trim()) &&
+    !stars.some((s) => s.text === l.raw));
+  pickable.forEach((l) => {
+    const raw = String(l.raw || "").trim();
+    const shownWords = raw.startsWith(TODAY_GIFT) ? giftName(raw) : counterOf(raw) ? counterOf(raw).base : lineLabel(raw);
+    const chip = button(shownWords, "quiet", () => add(l.raw));
+    chip.dataset.words = shownWords.toLowerCase();
     applySubject(chip, l);
     chips.append(chip);
   });
   card.append(chips);
   const form = el("form", "page-inline");
   const field = el("input");
-  field.placeholder = "Or type it";
+  field.placeholder = pickable.length > 8 ? "Type to find one, or type a new one" : "Or type it";
+  field.addEventListener("input", () => {
+    const want = field.value.trim().toLowerCase();
+    chips.querySelectorAll("button").forEach((b) => { b.hidden = Boolean(want) && !b.dataset.words.includes(want); });
+  });
   field.setAttribute("aria-label", "North Star");
   form.append(field, el("button", "", "Add"));
   form.addEventListener("submit", (event) => {
@@ -5775,7 +5788,7 @@ function pageTaskList(day, lines, times) {
   card.append(head);
   const found = allDays(state.alldays);
   const d = found && found.days.find((x) => x.day === day);
-  const raw = d ? dayLines(d.lines, day, state.pendingDays) : [];
+  const raw = d ? dayLines(movedLines(day, d.lines), day, state.pendingDays) : [];
   const groups = pageGroups(raw);
   const known = new Set(raw.filter((l) => l.kind === "line").map((l) => l.raw));
   const loose = groups.loose.concat(lines.filter((l) => l.kind === "line" && !l.repeat && !known.has(l.raw)))
@@ -5784,30 +5797,60 @@ function pageTaskList(day, lines, times) {
   if (folded) { card.append(el("p", "muted", openCount + " open" + (groups.groups.length ? ", " + groups.groups.length + " mini " + (groups.groups.length === 1 ? "list" : "lists") : ""))); return card; }
   const list = el("div", "page-task-list");
   if (!loose.length && !groups.groups.length) list.append(el("p", "muted", "Nothing here yet. Brain dump everything below."));
+  // 2026-11-10: "i dont like this for how tasks arent like" (Today). Same
+  // look: counters with their bar, a 🎁 with its lock, its subject's colour.
+  const looks = new Map();
+  if (day === isoDay(new Date())) {
+    todayLook(renamedLines(state.day && state.day.lines), state.pendingToday)
+      .forEach((l) => { if (l.kind === "line") looks.set(l.text, l); });
+  }
   const row = (line, inGroup) => {
     const at = times[day + "|" + line.raw];
     const held = page.held && page.held.raw === line.raw;
-    const item = el("div", "page-task" + (line.done ? " done" : "") + (held ? " held" : "") + (line.sub || inGroup ? " sub" : ""));
+    const look = looks.get(String(line.raw || "").trim()) || {};
+    const count = look.counter || counterOf(line.raw);
+    const gift = look.gift || String(line.raw || "").trim().startsWith(TODAY_GIFT);
+    const item = el("div", "page-task" + (line.done ? " done" : "") + (held ? " held" : "") + (line.sub || inGroup ? " sub" : "") +
+      (gift ? " gift" : "") + (look.locked ? " locked" : ""));
     applySubject(item, line);
+    if (!item.classList.contains("subj") && look.subject && subjectColour(look.subject)) {
+      item.classList.add("subj");
+      item.style.setProperty("--subj", subjectColour(look.subject));
+    }
     item.draggable = !line.done;
     item.addEventListener("dragstart", (event) => {
       event.dataTransfer.setData("text/plain", line.raw);
       event.dataTransfer.effectAllowed = "move";
     });
-    const tick = button("", "box" + (line.done ? " ticked" : ""), () => { markDone(day, line.raw, !line.done, true); drawPage(); });
-    tick.setAttribute("aria-label", (line.done ? "Untick " : "Tick ") + line.raw);
-    const name = button(lineLabel(line.text), "page-task-name", () => { if (!line.done) pageHold(line); });
+    const tick = look.locked
+      ? button("\u{1F512}", "box lock", () => {
+        page.said = "Locked for now. Finish " + (look.waits || []).slice(0, 2).join(" and ") + " first.";
+        drawPage();
+      })
+      : button("", "box" + (line.done ? " ticked" : ""), () => { markDone(day, line.raw, !line.done, true); drawPage(); });
+    tick.setAttribute("aria-label", (look.locked ? "Locked: " : line.done ? "Untick " : "Tick ") + line.raw);
+    const words = gift ? giftName(line.raw) : count ? count.base : lineLabel(line.text);
+    const name = button(words, "page-task-name", () => { if (!line.done) pageHold(line); });
     item.append(tick, name);
+    if (count) {
+      const bar = el("span", "count-bar");
+      const fill = el("span", "count-fill");
+      fill.style.width = Math.round(100 * count.done / Math.max(1, count.total)) + "%";
+      bar.append(fill);
+      item.append(bar, el("span", "count-num", count.done + "/" + count.total));
+    }
     const p = timeParts(at);
-    item.append(el("span", "page-task-when", p ? clockWords(hhmm(p.start)) : line.done || inGroup ? "" : "no time"));
+    if (p) item.append(el("span", "page-task-when", clockWords(hhmm(p.start))));   // 2026-11-10: no more "no time"
     if ((pageOf(day).stars || []).some((s) => s.text === line.raw)) item.append(el("span", "page-star-icon small", "★"));
-    if (!line.done && !line.repeat && !line.sub && !inGroup && day >= isoDay(new Date())) { item.append(tmrwButton(day, line.raw, false)); item.append(boxButton(day, line.raw, false)); }   // 2026-10-25f, 25g
+    if (!line.done && !line.repeat && !line.sub && !inGroup && day >= isoDay(new Date())) {
+      const extras = el("span", "page-task-extras");          // 2026-11-10: only on hover
+      extras.append(tmrwButton(day, line.raw, false), boxButton(day, line.raw, false));
+      item.append(extras);
+    }   // 2026-10-25f, 25g
     return item;
   };
   const opened = recall("tutor-minilists-open", {});
-  const doneLoose = loose.filter((l) => l.done);
-  loose.filter((l) => !l.done).forEach((line) => list.append(row(line, false)));
-  groups.groups.forEach((g) => {
+  const miniList = (g) => {
     const key = day + "|" + g.raw;
     const isOpen = Boolean(opened[key]);
     const got = g.items.filter((l) => l.done).length;
@@ -5816,10 +5859,49 @@ function pageTaskList(day, lines, times) {
     top.setAttribute("aria-expanded", String(isOpen));
     top.append(el("span", "mini-arrow", isOpen ? "▾" : "▸"), el("span", "mini-name", g.head), el("span", "mini-count", got + " of " + g.items.length));
     box.append(top);
-    if (isOpen) g.items.forEach((line) => box.append(row(line, true)));
-    list.append(box);
+    if (isOpen) g.items.forEach((line) => box.append(orderable(row(line, true), line)));
+    return box;
+  };
+  // 2026-11-10: "reoder the tasks ... and add line gaps where it is just so
+  // it feels... real". Her list in its own order, gaps and all; a task
+  // dragged onto another goes there (on the laptop too).
+  const orderable = (item, line) => {
+    if (line.done || day < isoDay(new Date())) return item;
+    item.addEventListener("dragover", (event) => { event.preventDefault(); item.classList.add("drop-here"); });
+    item.addEventListener("dragleave", () => item.classList.remove("drop-here"));
+    item.addEventListener("drop", (event) => {
+      item.classList.remove("drop-here");
+      const moving = event.dataTransfer.getData("text/plain");
+      if (!moving || moving === line.raw || !raw.some((l) => l.raw === moving)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const r = item.getBoundingClientRect();
+      const order = raw.filter((l) => l.kind === "line").map((l) => l.raw).filter((t) => t !== moving);
+      const at = order.indexOf(line.raw);
+      const before = event.clientY > r.top + r.height / 2 ? (order[at + 1] || "") : line.raw;
+      orderLine(day, moving, before);
+    });
+    return item;
+  };
+  const shown = new Set();
+  let open = null, gap = false;
+  raw.forEach((l) => {
+    if (l.kind === "gap") { open = null; gap = list.children.length > 0; return; }
+    if (gap) { list.append(el("div", "page-task-gap")); gap = false; }
+    if (l.kind === "head") {
+      open = groups.groups.find((g) => g.raw === l.raw && !shown.has(g));
+      if (open) { shown.add(open); list.append(miniList(open)); }
+      return;
+    }
+    if (l.kind !== "line" || l.repeat || deleting(day, l.raw)) return;
+    if (open && open.items.includes(l)) return;
+    list.append(orderable(row(l, false), l));
   });
-  doneLoose.forEach((line) => list.append(row(line, false)));
+  const extra = loose.filter((l) => !known.has(l.raw));
+  if (extra.length) {
+    list.append(el("div", "page-task-gap"));
+    extra.forEach((line) => list.append(row(line, false)));
+  }
   card.append(list);
   const form = el("form", "page-inline");
   const field = el("input");
@@ -5829,6 +5911,109 @@ function pageTaskList(day, lines, times) {
   form.addEventListener("submit", (event) => { event.preventDefault(); pageAddAt(field.value, null); });
   card.append(form);
   return card;
+}
+
+// 2026-11-10: a line moved in a day's list, shown at once till the laptop's
+// copy has it (2 minutes at most).
+state.pendingMoves = [];
+function movedLines(day, lines) {
+  const now = Date.now();
+  state.pendingMoves = state.pendingMoves.filter((m) => now - m.at < 120000);
+  let out = (lines || []).slice();
+  state.pendingMoves.filter((m) => m.day === day).forEach((m) => {
+    const at = out.findIndex((l) => String(l.text || "").trim() === m.text);
+    if (at < 0) return;
+    const [line] = out.splice(at, 1);
+    const to = m.before ? out.findIndex((l) => String(l.text || "").trim() === m.before) : -1;
+    if (to < 0) out.push(line); else out.splice(to, 0, line);
+  });
+  return out;
+}
+async function orderLine(day, text, before) {
+  state.pendingMoves.push({ day, text, before, at: Date.now() });
+  drawPage();
+  const ok = await sendEdit({ kind: "line_order", day, text, before });
+  if (!ok) { page.said = "Couldn't move that. Are you online?"; drawPage(); }
+}
+
+// ---- 2026-11-10: the Day page's cards, where she puts them.
+const PAGE_CARD_KEYS = ["star", "track", "school", "tasks", "basics", "treats", "notes", "fun", "carry"];
+const PAGE_LAYOUT_START = [["star", "tasks", "carry"], ["track", "school", "basics", "treats", "notes", "fun"]];
+function pageLayout() {
+  const kept = recall("tutor-page-layout", null);
+  const cols = Array.isArray(kept) && kept.length === 2 && kept.every(Array.isArray)
+    ? kept.map((c) => c.filter((k) => PAGE_CARD_KEYS.includes(k))) : PAGE_LAYOUT_START.map((c) => c.slice());
+  const seen = new Set(cols.flat());
+  PAGE_LAYOUT_START.forEach((c, side) => c.forEach((k) => { if (!seen.has(k)) cols[side].push(k); }));
+  return cols;
+}
+function pageLayoutSave(cols) { keep("tutor-page-layout", cols); }
+function pageMove(key, side, index) {
+  const cols = pageLayout().map((c) => c.filter((k) => k !== key));
+  const to = Math.max(0, Math.min(1, side));
+  cols[to].splice(Math.max(0, Math.min(index, cols[to].length)), 0, key);
+  pageLayoutSave(cols);
+}
+function pageGrip(key) {
+  const grip = button("\u283F", "page-grip", () => {});
+  grip.title = "Drag to move this card. Or use the arrow keys.";
+  grip.setAttribute("aria-label", "Move the " + key + " card (arrow keys)");
+  grip.addEventListener("keydown", (event) => {
+    const cols = pageLayout();
+    const side = cols[0].includes(key) ? 0 : 1;
+    const at = cols[side].indexOf(key);
+    const moves = { ArrowUp: [side, at - 1], ArrowDown: [side, at + 1], ArrowLeft: [0, at], ArrowRight: [1, at] };
+    if (!moves[event.key]) return;
+    event.preventDefault();
+    pageMove(key, moves[event.key][0], moves[event.key][1]);
+    drawPage();
+    const again = document.querySelector('#tab-page [data-card="' + key + '"] .page-grip');
+    if (again) again.focus();
+  });
+  grip.addEventListener("pointerdown", (event) => pageDragStart(event, key, grip));
+  return grip;
+}
+function pageDragStart(event, key, grip) {
+  const card = grip.closest(".movable");
+  const body = card && card.closest(".page-cols");
+  if (!card || !body || narrow()) return;
+  event.preventDefault();
+  const rect = card.getBoundingClientRect();
+  const hole = el("div", "page-hole");
+  hole.style.height = rect.height + "px";
+  card.after(hole);
+  card.classList.add("dragging");
+  Object.assign(card.style, { position: "fixed", left: rect.left + "px", top: rect.top + "px", width: rect.width + "px", zIndex: 50 });
+  const dx = event.clientX - rect.left, dy = event.clientY - rect.top;
+  page.dragging = true;
+  const scroller = (() => { let n = body.parentElement; while (n && n !== document.body) { const o = getComputedStyle(n).overflowY; if ((o === "auto" || o === "scroll") && n.scrollHeight > n.clientHeight) return n; n = n.parentElement; } return null; })();
+  const move = (e) => {
+    card.style.left = (e.clientX - dx) + "px";
+    card.style.top = (e.clientY - dy) + "px";
+    const edge = e.clientY < 70 ? -18 : e.clientY > window.innerHeight - 70 ? 18 : 0;   // near the top or bottom: scroll
+    if (edge) { if (scroller) scroller.scrollTop += edge; else window.scrollBy(0, edge); }
+    const cols = [...body.querySelectorAll(".page-col")];
+    const col = cols.find((c) => { const r = c.getBoundingClientRect(); return e.clientX >= r.left && e.clientX <= r.right; }) ||
+      cols.reduce((a, c) => (Math.abs(c.getBoundingClientRect().left - e.clientX) < Math.abs(a.getBoundingClientRect().left - e.clientX) ? c : a));
+    const others = [...col.querySelectorAll(":scope > .movable")].filter((c) => c !== card);
+    const before = others.find((c) => { const r = c.getBoundingClientRect(); return e.clientY < r.top + r.height / 2; });
+    if (before) before.before(hole); else col.append(hole);
+  };
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    window.removeEventListener("pointercancel", up);
+    hole.replaceWith(card);
+    card.classList.remove("dragging");
+    card.removeAttribute("style");
+    page.dragging = false;
+    pageLayoutSave([...body.querySelectorAll(".page-col")].map((c) =>
+      [...c.querySelectorAll(":scope > .movable")].map((n) => n.dataset.card)));
+    drawPage();
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+  window.addEventListener("pointercancel", up);
 }
 
 // 2026-10-19o: a bank of fun things to do on a break. Her list lives in
@@ -6800,6 +6985,7 @@ function pageCarryCard(day, lines, data) {
 function drawPage() {
   const box = $("tab-page");
   if (!box) return;
+  if (page.dragging) return;                // 2026-11-10: not in the middle of a drag
   if (page.notesDirty && box.contains(document.activeElement) &&
       (document.activeElement.classList.contains("page-notes-box") || document.activeElement.classList.contains("school-note"))) return;   // she's writing (2026-10-21: school notes too)
   const keepFocus = document.activeElement && box.contains(document.activeElement) && document.activeElement.tagName === "INPUT"
@@ -6858,21 +7044,39 @@ function drawPage() {
   if (page.said) box.append(el("p", "page-said", page.said));
   if (day === today) { const cb = carryBar(found); if (cb) box.append(cb); }   // 2026-10-23
   if (day === today) { pageRollover(found, today); box.append(pageNowCard(day, lines, times, found)); }   // 2026-10-20d
-  const top = el("div", "page-top");
-  top.append(pageStarCard(day, lines, data));
-  if (!hiding("pagetrack")) top.append(pageTrackCard(day, data));     // 2026-11-07b
-  box.append(top);
-  const body = el("div", "page-body");
-  const right = el("div", "page-right");
-  const school = pageSchoolCard(day);                               // 2026-10-21: school hours, hidden till opened
-  if (school) right.append(school);
-  right.append(pageTaskList(day, lines, times), pageBasicsCard(day), pageTreatsCard(day), pageNotesCard(day, data), pageFunCard());   // 2026-10-19o: fun stuff bank; 2026-10-20e: treats; 2026-10-21: prayers and meals
-  const carry = pageCarryCard(day, lines, data);
-  if (carry) right.append(carry);
-  // 2026-10-20h: "i thought we quit time blocks??" The half hour grid is off
-  // the Day page; times live on the calendar.
-  body.classList.add("no-blocks");
-  body.append(right);
+  // 2026-11-10: "ability to drag around components on screen pls ... and
+  // its leaving blank spoaces". Two columns that stack (no gaps), and she
+  // drags a card by its grip to where she wants it. Kept on this device.
+  const cards = {
+    star: () => pageStarCard(day, lines, data),
+    track: () => hiding("pagetrack") ? null : pageTrackCard(day, data),   // 2026-11-07b
+    school: () => pageSchoolCard(day),                                    // 2026-10-21: school hours, hidden till opened
+    tasks: () => pageTaskList(day, lines, times),
+    basics: () => pageBasicsCard(day),                                    // 2026-10-21: prayers and meals
+    treats: () => pageTreatsCard(day),                                    // 2026-10-20e
+    notes: () => pageNotesCard(day, data),
+    fun: () => pageFunCard(),                                             // 2026-10-19o
+    carry: () => pageCarryCard(day, lines, data),
+  };
+  const body = el("div", "page-body page-cols");
+  const columns = pageLayout().map((keys, side) => {
+    const col = el("div", "page-col");
+    col.dataset.side = String(side);
+    keys.forEach((key) => {
+      const made = cards[key] && cards[key]();
+      if (!made) return;
+      made.dataset.card = key;
+      made.classList.add("movable");
+      made.append(pageGrip(key));
+      col.append(made);
+    });
+    return col;
+  });
+  if (narrow()) {
+    const one = el("div", "page-col");
+    columns.forEach((c) => one.append(...c.children));
+    body.append(one);
+  } else body.append(...columns);
   box.append(body);
   if (keepFocus) {
     const again = [...box.querySelectorAll("input")].find((i) => i.placeholder === keepFocus.ph);
