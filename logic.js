@@ -1683,7 +1683,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v103";   // 2026-11-10: was v102 (2026-11-07b: was v101 (2026-11-07: was v100 (2026-11-06c: was v99 (2026-10-30e: was v98 (2026-10-30d: was v97 (2026-10-30c: was v96 (2026-10-30b: was v95 (2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81))))))))))
+export const APP_VERSION = "v104";   // 2026-11-10e: was v103 (2026-11-10: was v102 (2026-11-07b: was v101 (2026-11-07: was v100 (2026-11-06c: was v99 (2026-10-30e: was v98 (2026-10-30d: was v97 (2026-10-30c: was v96 (2026-10-30b: was v95 (2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81)))))))))))
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -3457,4 +3457,56 @@ export function quickPick(days, today, stars, skipRaw, rnd) {
   const pool = pool0.filter((p) => p.raw !== skipRaw).length ? pool0.filter((p) => p.raw !== skipRaw) : pool0;
   if (!pool.length) return null;
   return pool[Math.min(pool.length - 1, Math.floor(r * pool.length))];
+}
+
+// ---- 2026-11-10e: "oh yeah thatd be nice- sync to my lapotp yeh?" Alarms
+// set on the website ring on the laptop (dark green screen).
+export const ALARM_OPTIONS = ["Done", "Snooze 5 min"];
+// The laptop's alarms, off live/alldays.
+export function alarmsOf(live) {
+  let held = null;
+  try { held = JSON.parse((live && live.data) || "null"); } catch (error) { held = null; }
+  const list = held && Array.isArray(held.alarms) ? held.alarms : [];
+  return list.filter((a) => a && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(String(a.at || "")))
+    .map((a) => ({ id: String(a.id || ""), at: String(a.at).slice(0, 16), text: String(a.text || ""),
+      options: Array.isArray(a.options) && a.options.length ? a.options.map(String) : ALARM_OPTIONS.slice() }))
+    .sort((x, y) => x.at.localeCompare(y.at));
+}
+function stampOf(d) {
+  return isoDay(d) + " " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+}
+// "7:30pm", "7pm", "19:30", "in 20 min", "in 1 hour" -> "YYYY-MM-DD HH:MM"
+// (the next time it comes round), or "" when it isn't a time.
+export function alarmWhen(text, now) {
+  now = now || new Date();
+  const low = String(text || "").trim().toLowerCase();
+  const inMatch = low.match(/^in\s+(\d{1,3}|an?|half an?)\s*(m|min|mins|minutes|h|hr|hrs|hour|hours)$/);
+  if (inMatch) {
+    let n = inMatch[1].startsWith("half") ? 30 : /^an?$/.test(inMatch[1]) ? 1 : Number(inMatch[1]);
+    if (inMatch[2].startsWith("h") && !inMatch[1].startsWith("half")) n *= 60;
+    return stampOf(new Date(now.getTime() + Math.max(1, n) * 60000));
+  }
+  const clock = parseClock12(low);
+  if (!clock) return "";
+  const [h, m] = clock.split(":").map(Number);
+  const bare = !/(am|pm)$/.test(low.replace(/\s+/g, "")) && h >= 1 && h <= 12;
+  const picks = (bare ? [h % 12, h % 12 + 12] : [h]).map((hour) => {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, m, 0, 0);
+    if (d <= now) d.setDate(d.getDate() + 1);
+    return d;
+  });
+  picks.sort((x, y) => x - y);
+  return stampOf(picks[0]);
+}
+// "Done, 10 more min" -> ["Done", "10 more min"]; blank is the normal two.
+export function alarmOptions(text) {
+  const out = String(text || "").split(/\s*(?:,|\/|\bor\b)\s*/i).map((o) => o.trim().replace(/[.!]+$/, "")).filter(Boolean).slice(0, 4);
+  return out.length ? out : ALARM_OPTIONS.slice();
+}
+// "7:30pm" or "7:30pm tomorrow", for the list.
+export function alarmLabel(at, now) {
+  const d = new Date(String(at).replace(" ", "T") + ":00");
+  if (isNaN(d)) return "";
+  const left = daysUntil(isoDay(d), now || new Date());
+  return clock12(d) + (left === 0 ? "" : left === 1 ? " tomorrow" : " " + d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }));
 }
