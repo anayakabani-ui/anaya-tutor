@@ -1282,3 +1282,26 @@ textarea.today-paste { width: 100%; box-sizing: border-box; font: inherit; font-
 .link-chip.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 .today-gift-row { justify-content: flex-end; margin: 6px 0 4px; }
 .today-gift-row button { flex: 0 0 auto; }
+
+/* 2026-11-10: the Day page in two columns that stack with no gaps, cards she
+   drags by their grip; tasks look like Today's. */
+.page-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; margin-top: 12px; }
+.page-col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.page-col > .page-card { margin: 0; }
+@media (max-width: 819px) { .page-cols { grid-template-columns: minmax(0, 1fr); } }
+.page-card.movable { position: relative; }
+.page-grip { position: absolute; top: 6px; left: 50%; transform: translateX(-50%); padding: 0 10px; height: 16px; line-height: 14px; font-size: 13px;
+  background: none; border: 0; color: var(--muted); opacity: 0.35; cursor: grab; touch-action: none; border-radius: 6px; }
+.page-card.movable:hover .page-grip, .page-grip:focus-visible { opacity: 1; background: var(--hover); }
+.page-card.dragging { box-shadow: var(--shadow-up); opacity: 0.95; cursor: grabbing; pointer-events: none; }
+.page-hole { border: 2px dashed var(--hover); border-radius: var(--r-card); }
+.page-task .count-bar { width: 70px; }
+.page-task.gift .page-task-name { font-weight: 600; }
+.page-task.locked { opacity: 0.6; }
+.page-task .box.lock { border: 0; background: none; font-size: 0.85rem; padding: 0; width: 16px; }
+.page-task-extras { display: inline-flex; gap: 4px; opacity: 0; transition: opacity var(--ease); }
+.page-task:hover .page-task-extras, .page-task:focus-within .page-task-extras { opacity: 1; }
+@media (hover: none) { .page-task-extras { opacity: 1; } }
+.page-task-gap { height: 12px; }
+.page-task.drop-here { box-shadow: inset 0 2px 0 var(--accent); }
+.page-star-picks { max-height: 260px; overflow: auto; }
