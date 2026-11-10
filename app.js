@@ -12,7 +12,7 @@ import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut }
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
          collection, doc, onSnapshot, addDoc, setDoc, deleteDoc, getDocs, query, orderBy, where }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { noteLines, todayLines, todayLook, TODAY_GIFT, giftWithLinks, giftName, counterOf, settleTicks, FILE_TYPES, isoDay, isoNow, daysUntil, clock12, dayText, minutesText,
+import { noteLines, todayLines, todayLook, alarmsOf, alarmWhen, alarmOptions, alarmLabel, TODAY_GIFT, giftWithLinks, giftName, counterOf, settleTicks, FILE_TYPES, isoDay, isoNow, daysUntil, clock12, dayText, minutesText,
          sizeText, inDays, rankSubjects, youtubeToday, reflectionDue, reflectionTally,
          parseGeminiChat, guessSubject, chatProblem, fileState, SHELVES,
          groupPapers, minutesForMarks, clockText, timerLeft, examEdit, examWords,
@@ -587,8 +587,88 @@ function drawToday() {
     row.append(button(TODAY_GIFT + " Make rewards", "soft", () => rewardsPanel()));
     box.append(row);
   }
+  if (!hiding("alarms")) box.append(alarmsFold());   // 2026-11-10e
   if (!hiding("paste")) box.append(todayPasteFold());
   if (!hiding("history")) box.append(historyFold("today", "Today history"));
+}
+
+// ---- 2026-11-10e: "oh yeah thatd be nice- sync to my lapotp yeh?" Alarms
+// set here go to the laptop, which rings them full screen in dark green.
+// One just set shows straight away (waiting) till the laptop's list has it.
+state.pendingAlarms = [];
+state.cancelledAlarms = new Set();
+state.alarmDraft = { when: "", text: "", options: "" };
+function alarmsShown() {
+  const now = new Date();
+  const real = alarmsOf(state.alldays).filter((a) => !state.cancelledAlarms.has(a.id));
+  const stamp = (d) => isoDay(d) + " " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+  state.pendingAlarms = state.pendingAlarms.filter((p) =>
+    p.at >= stamp(new Date(now.getTime() - 60000)) && !real.some((a) => a.at === p.at && a.text.toLowerCase() === p.text.toLowerCase()));
+  return real.concat(state.pendingAlarms.map((p) => ({ ...p, waiting: true })))
+    .sort((x, y) => x.at.localeCompare(y.at));
+}
+function fillAlarmList(list) {
+  list.replaceChildren();
+  const shown = alarmsShown();
+  if (!shown.length) { list.append(el("p", "muted", "No alarms set.")); return; }
+  shown.forEach((a) => {
+    const row = el("div", "alarm-row");
+    row.append(el("span", "alarm-time", alarmLabel(a.at)),
+      el("span", "grow", a.text + (a.waiting ? " (waiting for the laptop)" : "")),
+      el("span", "alarm-buttons muted", a.options.join(" \u00b7 ")));
+    if (!a.waiting) {
+      row.append(button("Cancel", "soft", async () => {
+        state.cancelledAlarms.add(a.id);
+        fillAlarmList(list);
+        const ok = await sendEdit({ kind: "alarm_cancel", id: a.id });
+        if (!ok) { state.cancelledAlarms.delete(a.id); state.todaySaid = "Couldn't send that. Are you online?"; drawToday(); }
+      }));
+    }
+    list.append(row);
+  });
+}
+function refreshAlarmList() {
+  const list = document.querySelector("#tab-today .alarm-list");
+  if (list) fillAlarmList(list);
+}
+function alarmsFold() {
+  const count = alarmsShown().length;
+  return fold("alarms", "Alarms", count || null, (inside) => {
+    const list = el("div", "alarm-list");
+    fillAlarmList(list);
+    inside.append(list);
+    const form = el("div", "alarm-form");
+    const field = (key, holder, label) => {
+      const input = el("input", "alarm-" + key);
+      input.type = "text";
+      input.placeholder = holder;
+      input.setAttribute("aria-label", label);
+      input.value = state.alarmDraft[key] || "";
+      input.addEventListener("input", () => { state.alarmDraft[key] = input.value; });
+      return input;
+    };
+    const when = field("when", "7:30pm or in 20 min", "Alarm time");
+    const words = field("text", "What for? (pack my bag)", "What the alarm says");
+    const options = field("options", "Buttons (blank: Done, Snooze 5 min)", "Alarm buttons");
+    const said = el("p", "muted alarm-said", "");
+    const set = async () => {
+      const at = alarmWhen(when.value);
+      if (!at) { said.textContent = "What time? Like 7:30pm, or in 20 min."; return; }
+      const alarm = { at, text: words.value.trim().replace(/^./, (c) => c.toUpperCase()).slice(0, 200) || "Your alarm.", options: alarmOptions(options.value) };
+      const ok = await sendEdit({ kind: "alarm_add", at: alarm.at, text: alarm.text, options: alarm.options });
+      if (!ok) { said.textContent = "Couldn't send that. Are you online?"; return; }
+      state.pendingAlarms.push({ ...alarm, id: "" });
+      state.alarmDraft = { when: "", text: "", options: "" };
+      when.value = ""; words.value = ""; options.value = "";
+      said.textContent = "Set for " + alarmLabel(alarm.at) + ". It rings on the laptop.";
+      fillAlarmList(list);
+    };
+    [when, words, options].forEach((i) => i.addEventListener("keydown", (e) => { if (e.key === "Enter") set(); }));
+    const row = el("div", "choices");
+    row.append(button("Set alarm", "", set));
+    form.append(when, words, options, row, said);
+    inside.append(form);
+  }, false);
 }
 
 // ---- 2026-11-07b: "id like a more button-like expierence for linking all
@@ -724,7 +804,7 @@ function todayPasteFold() {
 // is including fun stuff, notes, and tracking". Kept on this device.
 const HIDE_PARTS = [["ring", "Tracking: useful time ring"], ["hours", "Tracking: hour by hour"], ["star", "North Star button"],
   ["chips", "Hide optional / Done at the bottom chips"], ["fun", "Fun and \u{1F381} lines"], ["paste", "Paste today's list box"],
-  ["history", "Today history"], ["pagetrack", "Day page: Tracking (habits, mood, productivity)"]];
+  ["history", "Today history"], ["pagetrack", "Day page: Tracking (habits, mood, productivity)"], ["alarms", "Alarms box"]];
 state.hide = recall("tutor-hide", {});
 function hiding(key) { return Boolean(state.hide && state.hide[key]); }
 function applyHides() {
@@ -7496,6 +7576,7 @@ function start() {
     stops.push(onSnapshot(doc(db, base + "live/alldays"), how, (snap) => {
       state.alldays = snap.exists() ? snap.data() : null;
       drawTasks(); drawCalendarSoft(); drawPage();
+      try { refreshAlarmList(); } catch (error) { /* never stops the page */ }   // 2026-11-10e
       try { treatsFromLaptop(); } catch (error) { /* never stops the page */ }   // 2026-10-21
       try { carryTreatsFromLaptop(); } catch (error) { /* never stops the page */ }   // 2026-10-23
       try { sortFromLaptop(); } catch (error) { /* never stops the page */ }   // 2026-10-24e
