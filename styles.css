@@ -1357,3 +1357,28 @@ textarea.today-paste { width: 100%; box-sizing: border-box; font: inherit; font-
 @media (min-width: 900px) {
   .draft-cols { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
 }
+
+/* 2026-11-13c: the draft box is a contenteditable now; B I U S and Tab; a day to put things on; pick rings. */
+.draft-edit { position: relative; overflow: auto; max-height: 70vh; white-space: pre-wrap; tab-size: 4; outline-offset: 1px; resize: vertical; }
+.draft-edit.empty::before { content: attr(data-placeholder); white-space: pre-line; color: var(--muted); position: absolute; pointer-events: none; }
+.draft-edit div { min-height: 1.55em; }
+::highlight(draft-struck) { text-decoration: line-through; color: var(--muted); }
+.draft-tools { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+.draft-tool-btn { flex: none; min-width: 38px; padding: 6px 10px; border-radius: 8px; background: var(--card); color: var(--text); border: 1px solid var(--line); font: inherit; }
+.draft-tool-btn.t-b { font-weight: 800; }
+.draft-tool-btn.t-i { font-style: italic; }
+.draft-tool-btn.t-u { text-decoration: underline; }
+.draft-tool-btn.t-s { text-decoration: line-through; }
+.draft-tool-btn.t-wide { font-size: 0.85rem; }
+.draft-when { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; flex-basis: 100%; }
+.draft-when-label { font-size: 0.85rem; color: var(--muted); }
+.draft-day { flex: none; padding: 6px 12px; border-radius: 999px; background: var(--card); color: var(--text); border: 1px solid var(--line); }
+.draft-day.on, .draft-date.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.draft-date { flex: none; padding: 5px 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--text); font: inherit; }
+.draft-bar { flex-wrap: wrap; }
+.draft-ring { flex: none; width: 1.3em; height: 1.3em; border-radius: 999px; border: 2px solid var(--line); box-sizing: border-box; align-self: center; }
+.draft-num.soft { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+.draft-head { display: flex; width: 100%; gap: 8px; align-items: baseline; text-align: left; background: transparent; border: 0; padding: 6px 8px; font: inherit; font-weight: 700; color: inherit; box-shadow: none; }
+.draft-head .grow { overflow-wrap: anywhere; }
+.draft-head.picked { background: color-mix(in srgb, var(--accent) 14%, transparent); border-radius: 8px; }
+.draft-line.done .grow { text-decoration: line-through; }
