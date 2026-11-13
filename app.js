@@ -49,7 +49,8 @@ import { noteLines, todayLines, todayLook, alarmsOf, alarmWhen, alarmOptions, al
          spinPick, spinTurn, SPIN_COLOURS, SPIN_MOST,
          carryOf, treatsCarry, carryWords, spinGroups, SPIN_OTHER, pickableLines,
          spinPrioGroups, SPIN_PRIO_COLOURS, sortOf, prevPrioDay, importPrio, sortPrio, quickStars, quickPick,
-         draftParse, draftLeaves, draftDone, draftPickText, draftsOf, draftAsk, draftIncoming, DRAFT_MOST, DRAFT_TEXT_MAX } from "./logic.js";   // 2026-11-13: drafts   // 2026-10-23   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
+         draftParse, draftLeaves, draftDone, draftPickText, draftsOf, draftAsk, draftIncoming, DRAFT_MOST, DRAFT_TEXT_MAX,
+         draftSelectKeys, draftMarksClean, draftMarksSame, draftPieces } from "./logic.js";   // 2026-11-13c   // 2026-11-13: drafts   // 2026-10-23   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
 
 const $ = (id) => document.getElementById(id);
 // 2026-10-18b: a line's subject, by its words, from the bank's subject lists.
@@ -7184,7 +7185,7 @@ function drawPage() {
 const DRAFT_SEND_MS = 3000;
 const drafts = { current: recall("tutor-draft-open", ""), shown: "", boxes: new Map(), picks: [], built: false,
   pendingTicks: new Map(), pendingSent: new Map(), made: recall("tutor-drafts-made", []), gone: new Map(), names: new Map(),
-  symbols: {}, sayOnce: "", naming: "", sure: 0 };
+  symbols: {}, sayOnce: "", naming: "", sure: 0, day: "", lastRange: null };
 function draftList() {
   const found = draftsOf(state.alldays);
   const now = Date.now();
@@ -7192,7 +7193,7 @@ function draftList() {
   drafts.made = drafts.made.filter((m) => !found.list.some((d) => d.id === m.id) && now - m.atMs < 7 * 86400000);
   if (drafts.made.length !== before) keep("tutor-drafts-made", drafts.made);
   const list = found.list.filter((d) => !(drafts.gone.has(d.id) && now - drafts.gone.get(d.id) < 120000))
-    .concat(drafts.made.map((m) => ({ id: m.id, name: m.name, text: "", version: "", done: new Set(), sent: new Set(), fresh: true })));
+    .concat(drafts.made.map((m) => ({ id: m.id, name: m.name, text: "", version: "", done: new Set(), sent: new Set(), later: {}, marks: [], fresh: true })));
   list.forEach((d) => {
     const named = drafts.names.get(d.id);
     if (named && named.name !== d.name && now - named.atMs < 120000) d.name = named.name; else drafts.names.delete(d.id);
@@ -7208,9 +7209,10 @@ function draftBox(d) {
   let box = drafts.boxes.get(d.id);
   if (!box) {
     const unsent = (recall("tutor-draft-unsent", {}) || {})[d.id];
-    box = unsent && typeof unsent.text === "string" && unsent.text !== d.text
-      ? { text: unsent.text, dirty: true, base: String(unsent.base || ""), sent: null, timer: null }
-      : { text: d.text, dirty: false, base: d.version, sent: null, timer: null };
+    const unsentMarks = unsent ? draftMarksClean(unsent.marks, unsent.text || "") : [];
+    box = unsent && typeof unsent.text === "string" && (unsent.text !== d.text || !draftMarksSame(unsentMarks, d.marks))
+      ? { text: unsent.text, marks: unsentMarks, dirty: true, base: String(unsent.base || ""), sent: null, timer: null }
+      : { text: d.text, marks: d.marks || [], dirty: false, base: d.version, sent: null, timer: null };
     drafts.boxes.set(d.id, box);
     if (box.dirty) box.timer = setTimeout(() => draftSend(d.id), 1500);
   }
@@ -7224,10 +7226,12 @@ function draftSend(id) {
   if (!box.dirty || !cloud) return Promise.resolve(false);
   const d = draftList().list.find((x) => x.id === id);
   const text = box.text.slice(0, DRAFT_TEXT_MAX), base = box.base;
+  const marks = draftMarksClean(box.marks, text);
   box.dirty = false;
-  box.sent = { text, base, atMs: Date.now() };
+  box.sent = { text, marks, base, atMs: Date.now() };
   box.base = noteVersion(text);
-  return sendEdit({ kind: "draft_save", id, name: d ? d.name : "Draft", text, base }).then((ok) => {
+  // marks go as one string: Firestore has no arrays inside arrays
+  return sendEdit({ kind: "draft_save", id, name: d ? d.name : "Draft", text, marks: JSON.stringify(marks), base }).then((ok) => {
     if (!ok) { box.dirty = true; box.base = base; box.sent = null; } else draftUnsent(id, null);
     if (state.tab === "drafts") drawDrafts();
     return ok;
@@ -7237,6 +7241,209 @@ function draftSend(id) {
 function draftThen(id, edit) {
   const box = drafts.boxes.get(id);
   return (box && box.dirty ? draftSend(id) : Promise.resolve(true)).then(() => sendEdit(edit));
+}
+// ---- 2026-11-13c: the draft box is a contenteditable. These read it as her
+// words plus [[start, end, "bi"], ...] (draftScan), draw it back (draftWrite),
+// and do Tab, B, I, U, S and the strike on ticked lines. The words are the
+// same plain text as before: "> task", "'--> step", a tab in front for a
+// sublist. Looks are kept beside them.
+const DRAFT_BLOCK = new Set(["DIV", "P", "LI", "UL", "OL", "H1", "H2", "H3", "H4", "H5", "H6", "BLOCKQUOTE", "PRE"]);
+// {text, marks, at: [offset of each probe [node, offset]], where: [[node, offset] of each target offset]}
+function draftScan(root, opts) {
+  opts = opts || {};
+  const probes = opts.probes || [], targets = opts.locate || [];
+  const at = probes.map(() => -1), where = targets.map(() => null), lines = [];
+  let cur = null, pos = 0;
+  const start = () => { if (!cur) cur = { text: "", runs: [] }; };
+  const push = () => { start(); lines.push(cur); cur = null; pos += 1; };
+  const add = (txt, fl) => {
+    if (!txt) return;
+    start();
+    const a = cur.text.length;
+    cur.text += txt;
+    if (fl) cur.runs.push([a, a + txt.length, fl]);
+    pos += txt.length;
+  };
+  const probe = (node, off) => probes.forEach((p, i) => { if (at[i] < 0 && p[0] === node && p[1] === off) at[i] = pos; });
+  const flagsOf = (node, fl) => {
+    const have = new Set(fl);
+    const tag = node.tagName;
+    if (tag === "B" || tag === "STRONG") have.add("b");
+    if (tag === "I" || tag === "EM") have.add("i");
+    if (tag === "U") have.add("u");
+    if (tag === "S" || tag === "STRIKE" || tag === "DEL") have.add("s");
+    const st = node.style;
+    if (st) {
+      if (/bold|^[6-9]00$/.test(st.fontWeight)) have.add("b");
+      if (st.fontStyle === "italic") have.add("i");
+      const line = st.textDecorationLine || st.textDecoration || "";
+      if (/underline/.test(line)) have.add("u");
+      if (/line-through/.test(line)) have.add("s");
+    }
+    return [..."bius"].filter((c) => have.has(c)).join("");
+  };
+  const walk = (node, fl) => {
+    const kids = node.childNodes;
+    for (let i = 0; i < kids.length; i++) {
+      probe(node, i);
+      const k = kids[i];
+      if (k.nodeType === 3) {
+        const raw = k.nodeValue.replace(/ /g, " ").replace(/​/g, "");
+        probes.forEach((p, j) => { if (at[j] < 0 && p[0] === k) at[j] = pos + Math.min(p[1], raw.length); });
+        targets.forEach((t, j) => { if (!where[j] && t >= pos && t <= pos + raw.length && !raw.includes("\n")) where[j] = [k, Math.min(t - pos, k.nodeValue.length)]; });
+        raw.split("\n").forEach((part, j) => { if (j) push(); add(part, fl); });
+        continue;
+      }
+      if (k.nodeType !== 1) continue;
+      const tag = k.tagName;
+      if (tag === "BR") {
+        if (i === kids.length - 1 && (node === root || DRAFT_BLOCK.has(node.tagName))) continue;
+        targets.forEach((t, j) => { if (!where[j] && t === pos && !cur) where[j] = [node, i]; });
+        push();
+        continue;
+      }
+      if (DRAFT_BLOCK.has(tag)) {
+        if (cur) push();
+        targets.forEach((t, j) => { if (!where[j] && t === pos && !k.textContent) where[j] = [k, 0]; });
+        const before = lines.length;
+        walk(k, flagsOf(k, fl));
+        if (cur) push(); else if (lines.length === before) push();
+        continue;
+      }
+      walk(k, flagsOf(k, fl));
+    }
+    probe(node, kids.length);
+  };
+  walk(root, "");
+  if (cur) { lines.push(cur); cur = null; }
+  targets.forEach((t, j) => { if (!where[j]) where[j] = [root, root.childNodes.length]; });
+  let off = 0;
+  const marks = [];
+  lines.forEach((l) => {
+    l.runs.forEach(([a, b, f]) => {
+      const last = marks[marks.length - 1];
+      if (last && last[1] === off + a && last[2] === f) last[1] = off + b; else marks.push([off + a, off + b, f]);
+    });
+    off += l.text.length + 1;
+  });
+  return { text: lines.map((l) => l.text).join("\n"), marks, at, where };
+}
+const DRAFT_TAGS = { b: "b", i: "i", u: "u", s: "s" };
+function draftWrite(root, text, marks) {
+  const frag = document.createDocumentFragment();
+  let off = 0;
+  String(text).split("\n").forEach((line) => {
+    const div = document.createElement("div");
+    if (!line) div.append(document.createElement("br"));
+    else draftPieces(line, marks, off).forEach((piece) => {
+      let node = document.createTextNode(piece.text);
+      [...piece.flags].forEach((c) => { const wrap = document.createElement(DRAFT_TAGS[c]); wrap.append(node); node = wrap; });
+      div.append(node);
+    });
+    off += line.length + 1;
+    frag.append(div);
+  });
+  root.replaceChildren(frag);
+}
+function draftSetSel(a, b) {
+  const loc = draftScan(drafts.area, { locate: [a, b] }).where;
+  if (!loc[0] || !loc[1]) return;
+  const range = document.createRange();
+  range.setStart(loc[0][0], loc[0][1]);
+  range.setEnd(loc[1][0], loc[1][1]);
+  const sel = getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+function draftEdited() {
+  const id = drafts.current;
+  const box = drafts.boxes.get(id);
+  if (!box) return;
+  const read = draftScan(drafts.area);
+  box.text = read.text;
+  box.marks = draftMarksClean(read.marks, read.text);
+  box.dirty = true;
+  drafts.sayOnce = "";
+  drafts.area.classList.toggle("empty", !read.text);
+  draftUnsent(id, { text: box.text, marks: box.marks, base: box.base });
+  clearTimeout(box.timer);
+  box.timer = setTimeout(() => draftSend(id), DRAFT_SEND_MS);
+  drafts.said.textContent = "Typing. It saves when you stop.";
+  drawDraftLook();
+}
+function draftFormat(command) {
+  try { document.execCommand("styleWithCSS", false, false); } catch (error) { /* older browsers */ }
+  document.execCommand(command, false, null);
+  draftEdited();
+}
+// Tab: the line goes in by a tab; Shift+Tab takes one back out. Over several lines, each one.
+function draftShift(way) {
+  const root = drafts.area, sel = getSelection();
+  if (!sel.rangeCount || !root.contains(sel.anchorNode)) return;
+  const read = draftScan(root, { probes: [[sel.anchorNode, sel.anchorOffset], [sel.focusNode, sel.focusOffset]] });
+  if (read.at.some((x) => x < 0)) return;
+  const a = Math.min(...read.at), b = Math.max(...read.at);
+  const lines = read.text.split("\n"), starts = [];
+  let off = 0;
+  lines.forEach((l) => { starts.push(off); off += l.length + 1; });
+  const lineOf = (o) => { let n = 0; starts.forEach((st, i) => { if (st <= o) n = i; }); return n; };
+  const first = lineOf(a), last = lineOf(b > a ? b - 1 : b);
+  let took = 0, tookFirst = 0;
+  for (let n = last; n >= first; n--) {
+    if (way > 0) {
+      draftSetSel(starts[n], starts[n]);
+      document.execCommand("insertText", false, "\t");
+      continue;
+    }
+    const line = lines[n];
+    let take = line.startsWith("\t") ? 1 : 0;
+    if (!take) while (take < 2 && line[take] === " ") take += 1;
+    if (!take) continue;
+    draftSetSel(starts[n], starts[n] + take);
+    document.execCommand("delete");
+    took += take;
+    if (n === first) tookFirst = take;
+  }
+  if (way > 0) draftSetSel(a + 1, Math.max(a + 1, b + (last - first + 1)));
+  else draftSetSel(a - Math.min(tookFirst, a - starts[first]), Math.max(0, b - took));
+  draftEdited();
+}
+// "on the draft part it should be having the strike": a ticked line is drawn
+// struck through in her own words. Only drawn (a highlight), never typed into them.
+function draftStrike(items, done, text) {
+  if (!drafts.area || !window.CSS || !CSS.highlights || typeof Highlight === "undefined") return;
+  try {
+    const lineDone = new Map();
+    items.forEach((it, n) => {
+      if (!it.key) return;
+      const v = draftDone(items, n, done);
+      lineDone.set(it.line, lineDone.has(it.line) ? lineDone.get(it.line) && v : v);
+    });
+    const rows = text.split("\n"), starts = [];
+    let off = 0;
+    rows.forEach((r) => { starts.push(off); off += r.length + 1; });
+    const lines = [...lineDone].filter(([n, v]) => v && n < rows.length).map(([n]) => n);
+    const targets = [];
+    lines.forEach((n) => targets.push(starts[n], starts[n] + rows[n].length));
+    const where = draftScan(drafts.area, { locate: targets }).where;
+    const ranges = [];
+    lines.forEach((n, i) => {
+      const from = where[2 * i], to = where[2 * i + 1];
+      if (!from || !to) return;
+      const range = new Range();
+      range.setStart(from[0], from[1]);
+      range.setEnd(to[0], to[1]);
+      ranges.push(range);
+    });
+    CSS.highlights.set("draft-struck", new Highlight(...ranges));
+  } catch (error) { /* a missing strike never stops the page */ }
+}
+// "Today", "Tomorrow", or "Sat 15 Nov".
+function draftDayWords(iso) {
+  const left = daysUntil(iso, new Date());
+  if (left === 0) return "Today";
+  if (left === 1) return "Tomorrow";
+  return new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
 }
 function draftBuild(tab) {
   drafts.chips = el("div", "draft-chips");
@@ -7275,35 +7482,62 @@ function draftBuild(tab) {
   });
   drafts.nameRow.append(drafts.nameBox, button("Save", "", saveName),
     button("Cancel", "soft", () => { drafts.naming = ""; drafts.nameRow.hidden = true; }));
-  drafts.area = el("textarea", "draft-box");
-  drafts.area.maxLength = DRAFT_TEXT_MAX;
+  // 2026-11-13c: "it shouldnt be markdown-style i can make it bold, itallic,
+  // underline, tab etc." A box you type in like an email (bold, italic,
+  // underline, strike, Tab), still her plain words with the looks kept
+  // beside them. Built once and never rebuilt while she types.
+  drafts.area = el("div", "draft-box draft-edit empty");
+  drafts.area.contentEditable = "true";
   drafts.area.spellcheck = false;
-  drafts.area.placeholder = "> a task\n'--> a step under it\n> subject ; another task";
+  drafts.area.setAttribute("role", "textbox");
+  drafts.area.setAttribute("aria-multiline", "true");
   drafts.area.setAttribute("aria-label", "Your draft");
-  drafts.area.addEventListener("input", () => {
-    const id = drafts.current;
-    const box = drafts.boxes.get(id);
-    if (!box) return;
-    box.text = drafts.area.value;
-    box.dirty = true;
-    drafts.sayOnce = "";
-    draftUnsent(id, { text: box.text, base: box.base });
-    clearTimeout(box.timer);
-    box.timer = setTimeout(() => draftSend(id), DRAFT_SEND_MS);
-    drafts.said.textContent = "Typing. It saves when you stop.";
-    drawDraftLook();
+  drafts.area.dataset.placeholder = "> a task\n'--> a step under it\n(Tab, then > ) a step too\n> subject ; another task";
+  try { document.execCommand("defaultParagraphSeparator", false, "div"); } catch (error) { /* older browsers */ }
+  drafts.area.addEventListener("input", draftEdited);
+  drafts.area.addEventListener("keydown", (e) => {
+    if (e.key === "Tab" && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); draftShift(e.shiftKey ? -1 : 1); return; }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "x" || e.key === "X")) { e.preventDefault(); draftFormat("strikeThrough"); }
+  });
+  drafts.area.addEventListener("paste", (e) => {
+    const plain = e.clipboardData && e.clipboardData.getData("text/plain");
+    if (plain === undefined || plain === null) return;
+    e.preventDefault();
+    document.execCommand("insertText", false, plain);
   });
   drafts.area.addEventListener("blur", () => {
     const box = drafts.boxes.get(drafts.current);
     if (box && box.dirty) draftSend(drafts.current);
   });
+  document.addEventListener("selectionchange", () => {
+    const sel = getSelection();
+    if (sel && sel.rangeCount && drafts.area && drafts.area.contains(sel.anchorNode)) drafts.lastRange = sel.getRangeAt(0).cloneRange();
+  });
+  drafts.tools = el("div", "draft-tools");
+  const tool = (label, cls, tip, run) => {
+    const b = button(label, "draft-tool-btn " + cls, () => {
+      if (document.activeElement !== drafts.area) {
+        drafts.area.focus();
+        if (drafts.lastRange) { const sel = getSelection(); sel.removeAllRanges(); sel.addRange(drafts.lastRange); }
+      }
+      run();
+    });
+    b.title = tip;
+    b.setAttribute("aria-label", tip);
+    b.addEventListener("mousedown", (e) => e.preventDefault());
+    return b;
+  };
+  drafts.tools.append(tool("B", "t-b", "Bold", () => draftFormat("bold")), tool("I", "t-i", "Italic", () => draftFormat("italic")),
+    tool("U", "t-u", "Underline", () => draftFormat("underline")), tool("S", "t-s", "Strike through", () => draftFormat("strikeThrough")),
+    tool("Sublist", "t-wide", "Tab the line in. A tabbed in > is a step of the task above.", () => draftShift(1)),
+    tool("Back out", "t-wide", "Tab the line back out", () => draftShift(-1)));
   drafts.said = el("p", "muted draft-said");
   drafts.said.setAttribute("role", "status");
   drafts.ask = el("div", "draft-ask");
   drafts.look = el("div", "note draft-look");
   drafts.bar = el("div", "draft-bar");
   const left = el("div", "draft-write");
-  left.append(drafts.area, drafts.said);
+  left.append(drafts.tools, drafts.area, drafts.said);
   const right = el("div", "draft-read");
   right.append(el("p", "draft-read-title", "How the tutor reads it"), drafts.ask, drafts.bar, drafts.look);
   const cols = el("div", "draft-cols");
@@ -7369,17 +7603,23 @@ function drawDrafts() {
   drafts.cols.hidden = !d;
   if (!d) { drafts.shown = ""; return; }
   const box = draftBox(d);
-  const got = draftIncoming(box, d.fresh ? null : { text: d.text, version: d.version }, Date.now());
+  const got = draftIncoming(box, d.fresh ? null : { text: d.text, version: d.version, marks: d.marks }, Date.now());
   box.base = got.base;
   box.sent = got.sent;
-  if (got.set) box.text = got.text;
+  if (got.set) { box.text = got.text; box.marks = got.marks || []; }
   if (drafts.shown !== d.id || got.set) {
-    if (drafts.area.value !== box.text) {
-      const at = drafts.area.selectionStart;
-      drafts.area.value = box.text;
-      if (drafts.shown === d.id && document.activeElement === drafts.area) drafts.area.setSelectionRange(at, at);
+    const here = draftScan(drafts.area);
+    if (drafts.shown !== d.id || here.text !== box.text || !draftMarksSame(draftMarksClean(here.marks, here.text), box.marks)) {
+      let caret = -1;
+      const sel = getSelection();
+      if (drafts.shown === d.id && document.activeElement === drafts.area && sel.rangeCount && drafts.area.contains(sel.anchorNode)) {
+        caret = draftScan(drafts.area, { probes: [[sel.anchorNode, sel.anchorOffset]] }).at[0];
+      }
+      draftWrite(drafts.area, box.text, box.marks);
+      if (caret >= 0) draftSetSel(Math.min(caret, box.text.length), Math.min(caret, box.text.length));
     }
     drafts.shown = d.id;
+    drafts.area.classList.toggle("empty", !box.text);
   }
   drafts.said.textContent = drafts.sayOnce || got.words;
   drawDraftLook();
@@ -7391,7 +7631,6 @@ function drawDraftLook() {
   if (!d) return;
   const box = draftBox(d);
   const now = Date.now();
-  drafts.area.rows = Math.max(10, Math.min(40, box.text.split("\n").length + 2));
   const read = draftParse(box.text, found.symbols);
   const items = read.items;
   const done = new Set(d.done);
@@ -7401,12 +7640,24 @@ function drawDraftLook() {
     if (d.done.has(key) === v.done || now - v.atMs > 120000) { drafts.pendingTicks.delete(k); return; }
     if (v.done) done.add(key); else done.delete(key);
   });
-  const sent = new Set(d.sent);
-  [...drafts.pendingSent].forEach(([k, atMs]) => {
+  // Where each line went: key -> the day (today's, or a day to come).
+  const todayIso = isoDay(new Date());
+  const placed = new Map();
+  d.sent.forEach((k) => placed.set(k, todayIso));
+  Object.entries(d.later || {}).forEach(([k, iso]) => placed.set(k, String(iso)));
+  [...drafts.pendingSent].forEach(([k, held]) => {
     if (!k.startsWith(d.id + "|")) return;
-    if (now - atMs > 120000 || d.sent.has(k.slice(d.id.length + 1))) { drafts.pendingSent.delete(k); return; }
-    sent.add(k.slice(d.id.length + 1));
+    const key = k.slice(d.id.length + 1);
+    if (now - held.atMs > 120000 || d.sent.has(key) || (d.later || {})[key]) { drafts.pendingSent.delete(k); return; }
+    placed.set(key, held.day);
   });
+  const placedOf = (n) => {      // a task whose steps all went to one day went there too
+    const own = items[n].key && placed.get(items[n].key);
+    if (own) return own;
+    const leaves = draftLeaves(items, n);
+    const days = new Set(leaves.map((k) => placed.get(items[k].key)));
+    return leaves.length && days.size === 1 && !days.has(undefined) ? [...days][0] : "";
+  };
   drafts.picks = drafts.picks.filter((k) => items.some((i) => i.key === k));
   // "If a symbol shows up that's not in this list, ask me once what it means."
   drafts.ask.replaceChildren();
@@ -7422,29 +7673,63 @@ function drawDraftLook() {
   }
   drafts.bar.replaceChildren();
   if (drafts.picks.length) {
-    drafts.bar.append(button("Put " + drafts.picks.length + " on Today", "draft-go", async () => {
+    // 2026-11-13c: "put till tomorrow etc if im planning for tomorrow"
+    const tomorrowIso = isoDay(new Date(Date.now() + 86400000));
+    if (drafts.day && drafts.day <= todayIso) drafts.day = "";
+    const dayIso = drafts.day || todayIso;
+    const when = el("div", "draft-when");
+    when.append(el("span", "draft-when-label", "Put on"));
+    [["Today", todayIso], ["Tomorrow", tomorrowIso]].forEach(([words, iso]) => {
+      const chip = button(words, "draft-day" + (dayIso === iso ? " on" : ""), () => { drafts.day = iso === todayIso ? "" : iso; drawDraftLook(); });
+      chip.setAttribute("aria-pressed", String(dayIso === iso));
+      when.append(chip);
+    });
+    const pick = el("input", "draft-date" + (dayIso !== todayIso && dayIso !== tomorrowIso ? " on" : ""));
+    pick.type = "date";
+    pick.min = todayIso;
+    pick.max = isoDay(new Date(Date.now() + 60 * 86400000));
+    pick.value = dayIso !== todayIso && dayIso !== tomorrowIso ? dayIso : "";
+    pick.setAttribute("aria-label", "Pick another day");
+    pick.addEventListener("change", () => { drafts.day = pick.value && pick.value > todayIso ? pick.value : ""; drawDraftLook(); });
+    when.append(pick);
+    drafts.bar.append(when, button("Put " + drafts.picks.length + " on " + draftDayWords(dayIso), "draft-go", async () => {
       const keys = drafts.picks.slice();
-      draftPickText(items, keys, done).went.forEach((k) => drafts.pendingSent.set(d.id + "|" + k, Date.now()));
+      const sendDay = dayIso === todayIso ? "" : dayIso;
+      draftPickText(items, keys, done).went.forEach((k) => drafts.pendingSent.set(d.id + "|" + k, { atMs: Date.now(), day: dayIso }));
       drafts.picks = [];
-      drafts.sayOnce = "Sending to Today.";
+      drafts.day = "";
+      drafts.sayOnce = "Sending to " + draftDayWords(dayIso) + ".";
       drawDrafts();
-      const ok = await draftThen(d.id, { kind: "draft_pick", id: d.id, keys });
-      drafts.sayOnce = ok ? "On its way to Today. It shows there in a few seconds while the tutor is open." : "Couldn't send that. Are you online?";
+      const ok = await draftThen(d.id, { kind: "draft_pick", id: d.id, keys, day: sendDay });
+      drafts.sayOnce = ok ? "On its way to " + draftDayWords(dayIso) + ". It shows there in a few seconds while the tutor is open." : "Couldn't send that. Are you online?";
       drawDrafts();
     }), button("Clear", "soft", () => { drafts.picks = []; drawDraftLook(); }));
   } else if (items.some((i) => i.key)) {
-    drafts.bar.append(el("p", "muted", "Tap lines in the order you want them today. A box ticks one."));
+    drafts.bar.append(el("p", "muted", "Tap lines to pick them, as many as you like, in the order you want them. A heading picks all its tasks, a task its steps, a step only itself. A box ticks one."));
   }
   drafts.look.replaceChildren();
   if (!items.some((i) => i.kind !== "gap")) {
     drafts.look.append(el("p", "empty", "Nothing in this draft yet. Just type on the left: > a task, '--> a step under it."));
+    draftStrike(items, done, box.text);
     return;
   }
   items.forEach((item, n) => {
     if (item.kind === "gap") { drafts.look.append(el("div", "note-gap")); return; }
     const hue = item.subject ? subjectColour(item.subject) : "";
     if (item.kind === "head") {
-      const head = el("div", "note-head", item.words.replace(/[:;]+$/, ""));
+      const keys = draftSelectKeys(items, n, done);
+      const all = keys.length > 0 && keys.every((k) => drafts.picks.includes(k));
+      const head = button("", "note-head draft-head" + (all ? " picked" : ""), () => {
+        if (!keys.length) return;
+        if (all) drafts.picks = drafts.picks.filter((k) => !keys.includes(k));
+        else keys.forEach((k) => { if (!drafts.picks.includes(k)) drafts.picks.push(k); });
+        drafts.sayOnce = "";
+        drafts.said.textContent = "";
+        drawDraftLook();
+      });
+      head.setAttribute("aria-pressed", String(all));
+      head.append(el("span", "grow", item.words.replace(/[:;]+$/, "")));
+      if (keys.length) head.append(el("span", "side", all ? "all picked" : "pick all " + keys.length));
       if (hue) head.style.color = hue;
       drafts.look.append(head);
       return;
@@ -7472,27 +7757,35 @@ function drawDraftLook() {
     });
     tick.setAttribute("aria-label", (ticked ? "Untick " : "Tick ") + item.words);
     tick.setAttribute("aria-pressed", String(ticked));
+    const keys = draftSelectKeys(items, n, done);
     const order = drafts.picks.indexOf(item.key);
-    const words = button("", "draft-words" + (order >= 0 ? " picked" : ""), () => {
-      if (item.waiting) {
-        drafts.said.textContent = "That one's waiting (NOT POSTED YET), so it stays off Today.";
+    const implied = order < 0 && keys.length > 0 && keys.every((k) => drafts.picks.includes(k));
+    const words = button("", "draft-words" + (order >= 0 || implied ? " picked" : ""), () => {
+      if (!keys.length) {
+        if (item.waiting) drafts.said.textContent = "That one's waiting (NOT POSTED YET), so it stays off Today.";
         return;
       }
-      if (order >= 0) drafts.picks.splice(order, 1); else drafts.picks.push(item.key);
+      if (keys.every((k) => drafts.picks.includes(k))) drafts.picks = drafts.picks.filter((k) => !keys.includes(k));
+      else keys.forEach((k) => { if (!drafts.picks.includes(k)) drafts.picks.push(k); });
+      drafts.said.textContent = "";
       drawDraftLook();
     });
-    words.setAttribute("aria-pressed", String(order >= 0));
+    words.setAttribute("aria-pressed", String(order >= 0 || implied));
     if (order >= 0) words.append(el("span", "draft-num", String(order + 1)));
+    else if (implied) words.append(el("span", "draft-num soft", "\u2022"));
+    else if (keys.length) words.append(el("span", "draft-ring"));
     words.append(el("span", "grow", item.words));
     row.append(tick, words);
     const tags = [];
-    if (sent.has(item.key)) tags.push("on Today");
+    const went = placedOf(n);
+    if (went) tags.push("on " + draftDayWords(went));
     if (item.waiting) tags.push("waiting");
     if (item.maybe) tags.push("not sure yet");
     if (item.ongoing) tags.push("ongoing");
-    if (tags.length) row.append(el("span", "side", tags.join(" · ")));
+    if (tags.length) row.append(el("span", "side", tags.join(" \u00b7 ")));
     drafts.look.append(row);
   });
+  draftStrike(items, done, box.text);
 }
 
 function drawAll() {
