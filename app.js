@@ -48,7 +48,8 @@ import { noteLines, todayLines, todayLook, alarmsOf, alarmWhen, alarmOptions, al
          roundDown5, flowExtend, flowAfterDone, flowSwitch, flowBreak, manyTimes,
          spinPick, spinTurn, SPIN_COLOURS, SPIN_MOST,
          carryOf, treatsCarry, carryWords, spinGroups, SPIN_OTHER, pickableLines,
-         spinPrioGroups, SPIN_PRIO_COLOURS, sortOf, prevPrioDay, importPrio, sortPrio, quickStars, quickPick } from "./logic.js";   // 2026-10-23   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
+         spinPrioGroups, SPIN_PRIO_COLOURS, sortOf, prevPrioDay, importPrio, sortPrio, quickStars, quickPick,
+         draftParse, draftLeaves, draftDone, draftPickText, draftsOf, draftAsk, draftIncoming, DRAFT_MOST, DRAFT_TEXT_MAX } from "./logic.js";   // 2026-11-13: drafts   // 2026-10-23   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
 
 const $ = (id) => document.getElementById(id);
 // 2026-10-18b: a line's subject, by its words, from the bank's subject lists.
@@ -586,6 +587,11 @@ function drawToday() {
     const row = el("div", "choices today-gift-row");
     row.append(button(TODAY_GIFT + " Make rewards", "soft", () => rewardsPanel()));
     box.append(row);
+  }
+  if (!hiding("tab:drafts")) {                        // 2026-11-13: "pull the bits I'm doing today" from her drafts
+    const from = el("div", "choices today-gift-row");
+    from.append(button("Pick from my drafts", "soft", () => selectTab("drafts")));
+    box.append(from);
   }
   if (!hiding("alarms")) box.append(alarmsFold());   // 2026-11-10e
   if (!hiding("paste")) box.append(todayPasteFold());
@@ -7164,8 +7170,334 @@ function drawPage() {
   }
 }
 
+// ---- 2026-11-13: Drafts. "I write my to-dos in email drafts. One draft
+// for general stuff, and if two subjects are major right now (like DT and
+// Maths), each one gets its own draft. Then I pull the bits I'm doing today
+// into one big email that's my to-do list for the day. I like it because
+// it's just typing: no boxes, no dates, no dragging. Fast, messy, mine."
+// A plain box to type in, and beside it how the tutor reads it. Tapping
+// lines there, in her order, picks them for Today ("like copying lines from
+// a draft into the big email"); a box ticks one. Her words are never
+// changed. The drafts ride in live/alldays, so there's no new document to
+// read; what she types goes up once she stops (DRAFT_SEND_MS), and is kept
+// on this device till the laptop has it.
+const DRAFT_SEND_MS = 3000;
+const drafts = { current: recall("tutor-draft-open", ""), shown: "", boxes: new Map(), picks: [], built: false,
+  pendingTicks: new Map(), pendingSent: new Map(), made: recall("tutor-drafts-made", []), gone: new Map(), names: new Map(),
+  symbols: {}, sayOnce: "", naming: "", sure: 0 };
+function draftList() {
+  const found = draftsOf(state.alldays);
+  const now = Date.now();
+  const before = drafts.made.length;
+  drafts.made = drafts.made.filter((m) => !found.list.some((d) => d.id === m.id) && now - m.atMs < 7 * 86400000);
+  if (drafts.made.length !== before) keep("tutor-drafts-made", drafts.made);
+  const list = found.list.filter((d) => !(drafts.gone.has(d.id) && now - drafts.gone.get(d.id) < 120000))
+    .concat(drafts.made.map((m) => ({ id: m.id, name: m.name, text: "", version: "", done: new Set(), sent: new Set(), fresh: true })));
+  list.forEach((d) => {
+    const named = drafts.names.get(d.id);
+    if (named && named.name !== d.name && now - named.atMs < 120000) d.name = named.name; else drafts.names.delete(d.id);
+  });
+  return { known: found.known, list, symbols: { ...found.symbols, ...drafts.symbols } };
+}
+function draftUnsent(id, value) {
+  const all = recall("tutor-draft-unsent", {}) || {};
+  if (value) all[id] = value; else delete all[id];
+  keep("tutor-draft-unsent", all);
+}
+function draftBox(d) {
+  let box = drafts.boxes.get(d.id);
+  if (!box) {
+    const unsent = (recall("tutor-draft-unsent", {}) || {})[d.id];
+    box = unsent && typeof unsent.text === "string" && unsent.text !== d.text
+      ? { text: unsent.text, dirty: true, base: String(unsent.base || ""), sent: null, timer: null }
+      : { text: d.text, dirty: false, base: d.version, sent: null, timer: null };
+    drafts.boxes.set(d.id, box);
+    if (box.dirty) box.timer = setTimeout(() => draftSend(d.id), 1500);
+  }
+  return box;
+}
+function draftSend(id) {
+  const box = drafts.boxes.get(id);
+  if (!box) return Promise.resolve(false);
+  clearTimeout(box.timer);
+  box.timer = null;
+  if (!box.dirty || !cloud) return Promise.resolve(false);
+  const d = draftList().list.find((x) => x.id === id);
+  const text = box.text.slice(0, DRAFT_TEXT_MAX), base = box.base;
+  box.dirty = false;
+  box.sent = { text, base, atMs: Date.now() };
+  box.base = noteVersion(text);
+  return sendEdit({ kind: "draft_save", id, name: d ? d.name : "Draft", text, base }).then((ok) => {
+    if (!ok) { box.dirty = true; box.base = base; box.sent = null; } else draftUnsent(id, null);
+    if (state.tab === "drafts") drawDrafts();
+    return ok;
+  });
+}
+// Anything typed goes first, so the laptop has the line before a tick or a pick names it.
+function draftThen(id, edit) {
+  const box = drafts.boxes.get(id);
+  return (box && box.dirty ? draftSend(id) : Promise.resolve(true)).then(() => sendEdit(edit));
+}
+function draftBuild(tab) {
+  drafts.chips = el("div", "draft-chips");
+  drafts.nameRow = el("div", "draft-name-row");
+  drafts.nameRow.hidden = true;
+  drafts.nameBox = el("input", "");
+  drafts.nameBox.type = "text";
+  drafts.nameBox.maxLength = 60;
+  drafts.nameBox.setAttribute("aria-label", "Draft name");
+  const saveName = () => {
+    const name = drafts.nameBox.value.replace(/\s+/g, " ").trim();
+    const mode = drafts.naming;
+    drafts.naming = "";
+    drafts.nameRow.hidden = true;
+    if (!name) { drawDrafts(); return; }
+    if (mode === "new") {
+      const id = "w" + Date.now().toString(36);
+      drafts.made.push({ id, name, atMs: Date.now() });
+      keep("tutor-drafts-made", drafts.made);
+      drafts.current = id;
+      keep("tutor-draft-open", id);
+      drafts.picks = [];
+      sendEdit({ kind: "draft_save", id, name, text: "", base: "" });
+      drawDrafts();
+      drafts.area.focus();
+      return;
+    }
+    const box = drafts.boxes.get(drafts.current);
+    drafts.names.set(drafts.current, { name, atMs: Date.now() });
+    if (box) { box.dirty = true; draftSend(drafts.current); }
+    drawDrafts();
+  };
+  drafts.nameBox.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); saveName(); }
+    if (e.key === "Escape") { drafts.naming = ""; drafts.nameRow.hidden = true; }
+  });
+  drafts.nameRow.append(drafts.nameBox, button("Save", "", saveName),
+    button("Cancel", "soft", () => { drafts.naming = ""; drafts.nameRow.hidden = true; }));
+  drafts.area = el("textarea", "draft-box");
+  drafts.area.maxLength = DRAFT_TEXT_MAX;
+  drafts.area.spellcheck = false;
+  drafts.area.placeholder = "> a task\n'--> a step under it\n> subject ; another task";
+  drafts.area.setAttribute("aria-label", "Your draft");
+  drafts.area.addEventListener("input", () => {
+    const id = drafts.current;
+    const box = drafts.boxes.get(id);
+    if (!box) return;
+    box.text = drafts.area.value;
+    box.dirty = true;
+    drafts.sayOnce = "";
+    draftUnsent(id, { text: box.text, base: box.base });
+    clearTimeout(box.timer);
+    box.timer = setTimeout(() => draftSend(id), DRAFT_SEND_MS);
+    drafts.said.textContent = "Typing. It saves when you stop.";
+    drawDraftLook();
+  });
+  drafts.area.addEventListener("blur", () => {
+    const box = drafts.boxes.get(drafts.current);
+    if (box && box.dirty) draftSend(drafts.current);
+  });
+  drafts.said = el("p", "muted draft-said");
+  drafts.said.setAttribute("role", "status");
+  drafts.ask = el("div", "draft-ask");
+  drafts.look = el("div", "note draft-look");
+  drafts.bar = el("div", "draft-bar");
+  const left = el("div", "draft-write");
+  left.append(drafts.area, drafts.said);
+  const right = el("div", "draft-read");
+  right.append(el("p", "draft-read-title", "How the tutor reads it"), drafts.ask, drafts.bar, drafts.look);
+  const cols = el("div", "draft-cols");
+  cols.append(left, right);
+  drafts.old = el("p", "muted");
+  tab.replaceChildren(drafts.chips, drafts.nameRow, drafts.old, cols);
+  drafts.cols = cols;
+  drafts.built = true;
+}
+function draftNow() {
+  const found = draftList();
+  if (!found.list.some((d) => d.id === drafts.current)) drafts.current = found.list.length ? found.list[0].id : "";
+  return { found, d: found.list.find((x) => x.id === drafts.current) || null };
+}
+function drawDrafts() {
+  const tab = $("tab-drafts");
+  if (!tab) return;
+  if (!drafts.built) draftBuild(tab);
+  const { found, d } = draftNow();
+  drafts.old.textContent = found.known || found.list.length ? "" : LAPTOP_OLD_WORDS + " Your drafts show up here once it has.";
+  // The row of drafts, like subjects in a drafts folder.
+  drafts.chips.replaceChildren();
+  found.list.forEach((one) => {
+    const chip = button(one.name, "draft-chip" + (one.id === drafts.current ? " on" : ""), () => {
+      if (one.id === drafts.current) return;
+      const was = drafts.boxes.get(drafts.current);
+      if (was && was.dirty) draftSend(drafts.current);
+      drafts.current = one.id;
+      keep("tutor-draft-open", one.id);
+      drafts.picks = [];
+      drafts.sayOnce = "";
+      drawDrafts();
+    });
+    chip.setAttribute("aria-pressed", String(one.id === drafts.current));
+    drafts.chips.append(chip);
+  });
+  const naming = (mode, value) => {
+    drafts.naming = mode;
+    drafts.nameRow.hidden = false;
+    drafts.nameBox.value = value;
+    drafts.nameBox.placeholder = mode === "new" ? "New draft's name (DT, Maths ...)" : "Draft name";
+    drafts.nameBox.focus();
+  };
+  if (found.list.length < DRAFT_MOST) drafts.chips.append(button("+ New draft", "draft-chip new", () => naming("new", "")));
+  if (d) {
+    drafts.chips.append(button("Rename", "quiet draft-tool", () => naming("rename", d.name)));
+    const sure = Date.now() < drafts.sure;
+    drafts.chips.append(button(sure ? "Sure? Delete it" : "Delete", "quiet draft-tool" + (sure ? " warn" : ""), () => {
+      if (Date.now() >= drafts.sure) { drafts.sure = Date.now() + 4000; drawDrafts(); setTimeout(drawDrafts, 4100); return; }
+      drafts.sure = 0;
+      drafts.gone.set(d.id, Date.now());
+      drafts.made = drafts.made.filter((m) => m.id !== d.id);
+      keep("tutor-drafts-made", drafts.made);
+      draftUnsent(d.id, null);
+      const box = drafts.boxes.get(d.id);
+      if (box) clearTimeout(box.timer);
+      drafts.boxes.delete(d.id);
+      sendEdit({ kind: "draft_del", id: d.id });
+      drafts.picks = [];
+      drawDrafts();
+    }));
+  }
+  drafts.cols.hidden = !d;
+  if (!d) { drafts.shown = ""; return; }
+  const box = draftBox(d);
+  const got = draftIncoming(box, d.fresh ? null : { text: d.text, version: d.version }, Date.now());
+  box.base = got.base;
+  box.sent = got.sent;
+  if (got.set) box.text = got.text;
+  if (drafts.shown !== d.id || got.set) {
+    if (drafts.area.value !== box.text) {
+      const at = drafts.area.selectionStart;
+      drafts.area.value = box.text;
+      if (drafts.shown === d.id && document.activeElement === drafts.area) drafts.area.setSelectionRange(at, at);
+    }
+    drafts.shown = d.id;
+  }
+  drafts.said.textContent = drafts.sayOnce || got.words;
+  drawDraftLook();
+}
+// The right-hand side only: never touches the box she's typing in.
+function drawDraftLook() {
+  if (!drafts.built) return;
+  const { found, d } = draftNow();
+  if (!d) return;
+  const box = draftBox(d);
+  const now = Date.now();
+  drafts.area.rows = Math.max(10, Math.min(40, box.text.split("\n").length + 2));
+  const read = draftParse(box.text, found.symbols);
+  const items = read.items;
+  const done = new Set(d.done);
+  [...drafts.pendingTicks].forEach(([k, v]) => {
+    if (!k.startsWith(d.id + "|")) return;
+    const key = k.slice(d.id.length + 1);
+    if (d.done.has(key) === v.done || now - v.atMs > 120000) { drafts.pendingTicks.delete(k); return; }
+    if (v.done) done.add(key); else done.delete(key);
+  });
+  const sent = new Set(d.sent);
+  [...drafts.pendingSent].forEach(([k, atMs]) => {
+    if (!k.startsWith(d.id + "|")) return;
+    if (now - atMs > 120000 || d.sent.has(k.slice(d.id.length + 1))) { drafts.pendingSent.delete(k); return; }
+    sent.add(k.slice(d.id.length + 1));
+  });
+  drafts.picks = drafts.picks.filter((k) => items.some((i) => i.key === k));
+  // "If a symbol shows up that's not in this list, ask me once what it means."
+  drafts.ask.replaceChildren();
+  if (read.unknown.length) {
+    const q = draftAsk(read.unknown[0]);
+    const row = el("div", "choices");
+    q.choices.forEach(([words, means]) => row.append(button(words, "soft", () => {
+      drafts.symbols = { ...drafts.symbols, [q.symbol]: means };
+      sendEdit({ kind: "draft_symbol", symbol: q.symbol, means });
+      drawDraftLook();
+    })));
+    drafts.ask.append(el("p", "draft-ask-words", q.words), row);
+  }
+  drafts.bar.replaceChildren();
+  if (drafts.picks.length) {
+    drafts.bar.append(button("Put " + drafts.picks.length + " on Today", "draft-go", async () => {
+      const keys = drafts.picks.slice();
+      draftPickText(items, keys, done).went.forEach((k) => drafts.pendingSent.set(d.id + "|" + k, Date.now()));
+      drafts.picks = [];
+      drafts.sayOnce = "Sending to Today.";
+      drawDrafts();
+      const ok = await draftThen(d.id, { kind: "draft_pick", id: d.id, keys });
+      drafts.sayOnce = ok ? "On its way to Today. It shows there in a few seconds while the tutor is open." : "Couldn't send that. Are you online?";
+      drawDrafts();
+    }), button("Clear", "soft", () => { drafts.picks = []; drawDraftLook(); }));
+  } else if (items.some((i) => i.key)) {
+    drafts.bar.append(el("p", "muted", "Tap lines in the order you want them today. A box ticks one."));
+  }
+  drafts.look.replaceChildren();
+  if (!items.some((i) => i.kind !== "gap")) {
+    drafts.look.append(el("p", "empty", "Nothing in this draft yet. Just type on the left: > a task, '--> a step under it."));
+    return;
+  }
+  items.forEach((item, n) => {
+    if (item.kind === "gap") { drafts.look.append(el("div", "note-gap")); return; }
+    const hue = item.subject ? subjectColour(item.subject) : "";
+    if (item.kind === "head") {
+      const head = el("div", "note-head", item.words.replace(/[:;]+$/, ""));
+      if (hue) head.style.color = hue;
+      drafts.look.append(head);
+      return;
+    }
+    if (item.kind === "note") { drafts.look.append(el("p", "draft-note", item.words)); return; }
+    if (item.kind === "slot") {
+      const slot = el("div", "draft-slot", "a step you still need to write");
+      slot.style.marginLeft = (item.depth * 22 + 30) + "px";
+      drafts.look.append(slot);
+      return;
+    }
+    const ticked = draftDone(items, n, done);
+    const row = el("div", "note-line draft-line" + (ticked ? " done" : "") + (item.big ? " bold" : "") +
+      (item.waiting ? " waiting" : "") + (item.maybe ? " maybe" : ""));
+    row.style.paddingLeft = (8 + item.depth * 22) + "px";
+    if (hue) { row.style.setProperty("--line-hue", hue); row.classList.add("hued"); }
+    const tick = button("", "box" + (ticked ? " ticked" : ""), () => {
+      const target = !ticked;
+      const leaves = draftLeaves(items, n);
+      (leaves.length ? leaves : [n]).forEach((k) => drafts.pendingTicks.set(d.id + "|" + items[k].key, { done: target, atMs: Date.now() }));
+      if (target && !replaying) setTimeout(() => celebrateTick(item.words), 0);
+      drafts.sayOnce = "";
+      drawDraftLook();
+      draftThen(d.id, { kind: "draft_tick", id: d.id, key: item.key, done: target });
+    });
+    tick.setAttribute("aria-label", (ticked ? "Untick " : "Tick ") + item.words);
+    tick.setAttribute("aria-pressed", String(ticked));
+    const order = drafts.picks.indexOf(item.key);
+    const words = button("", "draft-words" + (order >= 0 ? " picked" : ""), () => {
+      if (item.waiting) {
+        drafts.said.textContent = "That one's waiting (NOT POSTED YET), so it stays off Today.";
+        return;
+      }
+      if (order >= 0) drafts.picks.splice(order, 1); else drafts.picks.push(item.key);
+      drawDraftLook();
+    });
+    words.setAttribute("aria-pressed", String(order >= 0));
+    if (order >= 0) words.append(el("span", "draft-num", String(order + 1)));
+    words.append(el("span", "grow", item.words));
+    row.append(tick, words);
+    const tags = [];
+    if (sent.has(item.key)) tags.push("on Today");
+    if (item.waiting) tags.push("waiting");
+    if (item.maybe) tags.push("not sure yet");
+    if (item.ongoing) tags.push("ongoing");
+    if (tags.length) row.append(el("span", "side", tags.join(" · ")));
+    drafts.look.append(row);
+  });
+}
+
 function drawAll() {
   drawRewards();
+  try { drawDrafts(); } catch (error) { /* never stops the page */ }   // 2026-11-13
   drawLessons();
   drawToday(); drawSubjects(); drawSchool();
   drawPage();                           // 2026-10-19i
@@ -7297,7 +7629,7 @@ function selectTab(key, focus) {
   // 2026-10-19k: the Day page and the calendar share the screen when split.
   // 2026-10-19n: the width first, so a hiccup below can never leave the
   // Day page squeezed into one thin column.
-  document.body.classList.toggle("wide-page", key === "calendar" || key === "page");
+  document.body.classList.toggle("wide-page", key === "calendar" || key === "page" || key === "drafts");   // 2026-11-13: drafts too
   const split = key === "page" && page.split && !page.smart && !narrow() && Boolean($("pair"));   // 2026-10-19q: smart plan gets the whole width
   if ($("pair")) show("pair", key === "page" || key === "calendar");
   show("tab-calendar", key === "calendar" || split);
@@ -7307,7 +7639,7 @@ function selectTab(key, focus) {
   $("page-name").textContent = name;
   show("page-name", !tabOnTop(key));
   // 2026-10-10q: the calendar wants the width; every other page is a column.
-  document.body.classList.toggle("wide-page", key === "calendar" || key === "page");
+  document.body.classList.toggle("wide-page", key === "calendar" || key === "page" || key === "drafts");   // 2026-11-13: drafts too
   document.body.classList.toggle("popout", popout);
   if (!popout) keep("tutor-tab", key);
 }
@@ -7577,6 +7909,7 @@ function start() {
       state.alldays = snap.exists() ? snap.data() : null;
       drawTasks(); drawCalendarSoft(); drawPage();
       try { refreshAlarmList(); } catch (error) { /* never stops the page */ }   // 2026-11-10e
+      try { drawDrafts(); } catch (error) { /* never stops the page */ }   // 2026-11-13: her drafts ride in this document
       try { treatsFromLaptop(); } catch (error) { /* never stops the page */ }   // 2026-10-21
       try { carryTreatsFromLaptop(); } catch (error) { /* never stops the page */ }   // 2026-10-23
       try { sortFromLaptop(); } catch (error) { /* never stops the page */ }   // 2026-10-24e
