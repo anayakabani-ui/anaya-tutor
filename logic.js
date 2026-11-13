@@ -1684,7 +1684,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v105";   // 2026-11-13: was v104 (2026-11-10e: was v103 (2026-11-10: was v102 (2026-11-07b: was v101 (2026-11-07: was v100 (2026-11-06c: was v99 (2026-10-30e: was v98 (2026-10-30d: was v97 (2026-10-30c: was v96 (2026-10-30b: was v95 (2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81))))))))))))
+export const APP_VERSION = "v106";   // 2026-11-13c: was v105 (2026-11-13: was v104 (2026-11-10e: was v103 (2026-11-10: was v102 (2026-11-07b: was v101 (2026-11-07: was v100 (2026-11-06c: was v99 (2026-10-30e: was v98 (2026-10-30d: was v97 (2026-10-30c: was v96 (2026-10-30b: was v95 (2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81))))))))))))
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -3574,7 +3574,7 @@ function draftFlags(words, known) {
 export function draftParse(text, known) {
   known = known || {};
   const items = [], unknown = [], seen = new Map();
-  let section = "", task = -1, step = -1, stepIndent = 0;
+  let section = "", task = -1, step = -1, stepIndent = 0, taskIndent = 0;   // 2026-11-13c: taskIndent
   const ask = (symbol) => { if (symbol && !unknown.includes(symbol) && !(symbol in known)) unknown.push(symbol); };
   const add = (line, kind, words, depth, parent, subject, chain) => {
     const item = { line, kind, depth: depth || 0, words, parent: parent === undefined ? -1 : parent, subject: subject || "", key: "",
@@ -3612,11 +3612,15 @@ export function draftParse(text, known) {
   String(text || "").replace(/\r\n?/g, "\n").split("\n").forEach((raw, line) => {
     const row = raw.trim();
     if (!row) { add(line, "gap", ""); return; }
-    const asStep = raw.match(DRAFT_STEP);
-    const asTask = asStep ? null : raw.match(DRAFT_TASK);
+    let asStep = raw.match(DRAFT_STEP);
+    let asTask = asStep ? null : raw.match(DRAFT_TASK);
+    if (asTask && task >= 0 && asTask[1].replace(/\t/g, "  ").length > taskIndent) {
+      asStep = asTask; asTask = null;      // 2026-11-13c: "tab > will also mean sublist"
+    }
     if (asTask) {
       if (!asTask[2]) { add(line, "slot", "", 0, -1, section); return; }
       task = aTask(line, asTask[2]);
+      taskIndent = asTask[1].replace(/\t/g, "  ").length;
       step = -1; stepIndent = 0;
       return;
     }
@@ -3624,7 +3628,7 @@ export function draftParse(text, known) {
       const indent = asStep[1].replace(/\t/g, "  ").length;
       const words = asStep[2];
       if (task < 0) {
-        if (words) task = aTask(line, words); else add(line, "slot", "", 0, -1, section);
+        if (words) { task = aTask(line, words); taskIndent = indent; } else add(line, "slot", "", 0, -1, section);
         return;
       }
       const deep = step >= 0 && indent > stepIndent;
@@ -3645,7 +3649,7 @@ export function draftParse(text, known) {
     const mark = row.match(DRAFT_SYMBOL_START);
     if (mark) {
       const means = known["start " + mark[1]];
-      if (means === "task") { task = aTask(line, mark[2]); step = -1; stepIndent = 0; return; }
+      if (means === "task") { task = aTask(line, mark[2]); taskIndent = 0; step = -1; stepIndent = 0; return; }
       if (means === "step" && task >= 0) { step = add(line, "step", mark[2], 1, task, items[task].subject); stepIndent = 0; return; }
       if (means !== "note") ask("start " + mark[1]);
     }
@@ -3697,10 +3701,64 @@ export function draftPickText(items, keys, done) {
   blocks.forEach((block) => {
     const steps = block.steps || draftLeaves(items, block.top).filter((n) => !done.has(items[n].key) && !items[n].waiting);
     lines.push("> " + items[block.top].words);
-    went.push(items[block.top].key);
+    if (!block.steps) went.push(items[block.top].key);   // 2026-11-13c: a lone step leaves its heading free
     steps.forEach((n) => { lines.push("'--> " + items[n].words); went.push(items[n].key); });
   });
   return { text: lines.join("\n"), went };
+}
+// 2026-11-13c: what one tap selects. "if i select a heading, then it should
+// select all of the subtasks or if i select a subtask itd select only those
+// ones and not the heading." A heading: its tasks (their open steps); a
+// task: its open steps (or itself with none); a step: only itself. Done and
+// waiting ones stay out. (Same as main.py draft_select_keys.)
+export function draftSelectKeys(items, at, done) {
+  done = done || new Set();
+  const item = items[at];
+  if (!item) return [];
+  const one = (n) => {
+    const leaves = draftLeaves(items, n);
+    const list = leaves.length ? leaves : (items[n].key ? [n] : []);
+    return list.filter((k) => !items[k].waiting && !done.has(items[k].key)).map((k) => items[k].key);
+  };
+  if (item.kind === "head") {
+    const out = [];
+    for (let n = at + 1; n < items.length; n++) {
+      if (items[n].kind === "head") break;
+      if (items[n].kind === "task" && items[n].parent < 0) one(n).forEach((k) => { if (!out.includes(k)) out.push(k); });
+    }
+    return out;
+  }
+  return item.kind === "task" || item.kind === "step" ? one(at) : [];
+}
+// 2026-11-13c: bold, italic, underline and strike on her draft, kept BESIDE
+// her words (never in them): [[start, end, "bi"], ...] in UTF-16 units, what
+// the laptop counts too. Anything odd is dropped. (main.py draft_marks_clean.)
+export function draftMarksClean(marks, text) {
+  const size = String(text || "").length, out = [];
+  (Array.isArray(marks) ? marks : []).forEach((m) => {
+    if (!Array.isArray(m) || out.length >= 3000) return;
+    const a = Math.trunc(Number(m[0])), b = Math.trunc(Number(m[1]));
+    const f = [..."bius"].filter((c) => String(m[2] || "").includes(c)).join("");
+    if (f && a >= 0 && b > a && b <= size) out.push([a, b, f]);
+  });
+  return out.sort((x, y) => x[0] - y[0] || x[1] - y[1] || (x[2] < y[2] ? -1 : x[2] > y[2] ? 1 : 0));
+}
+export function draftMarksSame(a, b) {
+  return JSON.stringify(a || []) === JSON.stringify(b || []);
+}
+// One line's pieces for drawing: [{text, flags}], cut wherever a mark starts or ends.
+export function draftPieces(text, marks, from) {
+  const cuts = new Set([0, text.length]);
+  (marks || []).forEach(([a, b]) => [a - from, b - from].forEach((c) => {
+    if (c > 0 && c < text.length && !/[\uDC00-\uDFFF]/.test(text[c])) cuts.add(c);
+  }));
+  const pts = [...cuts].sort((x, y) => x - y), out = [];
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const flags = new Set();
+    (marks || []).forEach(([a, b, f]) => { if (a - from <= pts[i] && b - from >= pts[i + 1]) [...f].forEach((c) => flags.add(c)); });
+    out.push({ text: text.slice(pts[i], pts[i + 1]), flags: [..."bius"].filter((c) => flags.has(c)).join("") });
+  }
+  return out;
 }
 // Her drafts off live/alldays: {list: [{id, name, text, version, done (Set), sent (Set)}], symbols, known}.
 // known is false until the laptop has sent any (an older tutor never does).
@@ -3711,7 +3769,9 @@ export function draftsOf(live) {
   const list = d && Array.isArray(d.list) ? d.list : [];
   return { known: Boolean(d),
     list: list.filter((x) => x && x.id).map((x) => ({ id: String(x.id), name: String(x.name || "Draft"), text: String(x.text || ""),
-      version: String(x.version || ""), done: new Set((x.done || []).map(String)), sent: new Set((x.sent || []).map(String)) })),
+      version: String(x.version || ""), done: new Set((x.done || []).map(String)), sent: new Set((x.sent || []).map(String)),
+      later: x.later && typeof x.later === "object" && !Array.isArray(x.later) ? { ...x.later } : {},   // 2026-11-13c: on a day to come
+      marks: draftMarksClean(x.marks, String(x.text || "")) })),
     symbols: d && d.symbols && typeof d.symbols === "object" ? { ...d.symbols } : {} };
 }
 // The one question about a symbol she hasn't explained: {symbol, words, choices}.
@@ -3725,16 +3785,17 @@ export function draftAsk(symbol) {
 // box is hers while she's typing or waiting for the laptop to take it.
 //   box: {text, dirty, base, sent: {text, base, atMs} | null}; snap: {text, version} | null
 export function draftIncoming(box, snap, nowMs) {
-  const keep = { set: false, text: box.text, base: box.base, sent: box.sent || null, words: "" };
+  const keep = { set: false, text: box.text, marks: box.marks || [], base: box.base, sent: box.sent || null, words: "" };
   if (box.dirty) return { ...keep, words: "Typing. It saves when you stop." };
   if (!snap) return { ...keep, words: box.sent ? "Sent. The laptop takes it in a few seconds while the tutor is open." : "" };
   const theirs = String(snap.text || ""), version = String(snap.version || "");
+  const theirMarks = snap.marks || [];
   let sent = box.sent || null;
   if (sent) {
-    if (theirs === sent.text) sent = null;
+    if (theirs === sent.text && draftMarksSame(theirMarks, sent.marks)) sent = null;
     else if (version === sent.base && nowMs - sent.atMs < 90000) return { ...keep, words: "Sent. The laptop takes it in a few seconds while the tutor is open." };
     else sent = null;
   }
-  if (theirs === box.text) return { set: false, text: theirs, base: version, sent, words: "Saved on the laptop." };
-  return { set: true, text: theirs, base: version, sent, words: "Saved on the laptop." };
+  if (theirs === box.text && draftMarksSame(theirMarks, box.marks)) return { set: false, text: theirs, marks: theirMarks, base: version, sent, words: "Saved on the laptop." };
+  return { set: true, text: theirs, marks: theirMarks, base: version, sent, words: "Saved on the laptop." };
 }
