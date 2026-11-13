@@ -1314,3 +1314,46 @@ textarea.today-paste { width: 100%; box-sizing: border-box; font: inherit; font-
 .alarm-form { display: flex; flex-direction: column; gap: 6px; }
 .alarm-form input { width: 100%; box-sizing: border-box; font: inherit; font-size: 0.9rem; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--hover); background: var(--bg); color: var(--text); }
 @media (prefers-color-scheme: dark) { .alarm-time { color: #7fd1a4; } }
+
+/* ---- 2026-11-13: Drafts. "it's just typing: no boxes, no dates, no dragging."
+   A plain box on the left, how the tutor reads it on the right (under it on a phone). */
+.draft-chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0 12px; }
+.draft-chip { flex: none; padding: 8px 16px; border-radius: 999px; background: var(--card); color: var(--text); border: 1px solid var(--line); font-weight: 500; }
+.draft-chip.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.draft-chip.new { border-style: dashed; color: var(--muted); background: transparent; }
+.draft-tool { flex: none; padding: 6px 10px; font-size: 0.85rem; }
+.draft-tool.warn { color: var(--warn); }
+.draft-name-row { display: flex; gap: 8px; margin: 0 0 12px; flex-wrap: wrap; }
+.draft-name-row input { flex: 1; min-width: 160px; }
+.draft-name-row button { flex: none; }
+.draft-cols { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.draft-cols[hidden] { display: none; }
+.draft-box { width: 100%; box-sizing: border-box; min-height: 240px; resize: vertical; padding: 16px 18px; border-radius: var(--r-card);
+  border: 1px solid var(--line); background: var(--card); color: var(--text); font: inherit; line-height: 1.55; white-space: pre-wrap; tab-size: 2; }
+.draft-box:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.draft-said { margin: 6px 2px 0; min-height: 1.2em; font-size: 0.85rem; }
+.draft-read-title { margin: 0 0 6px; font-size: 0.8rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.draft-bar { display: flex; gap: 8px; align-items: center; margin: 0 0 8px; min-height: 40px; }
+.draft-bar p { margin: 0; font-size: 0.9rem; }
+.draft-bar button { flex: none; }
+.draft-go { font-weight: 700; }
+.draft-ask { margin: 0 0 10px; }
+.draft-ask:empty { display: none; }
+.draft-ask-words { margin: 0; font-weight: 500; }
+.draft-ask .choices { margin-top: 8px; }
+.draft-line { align-items: center; }
+.draft-line.hued { box-shadow: inset 3px 0 0 var(--line-hue); }
+.draft-words { flex: 1; min-width: 0; display: flex; gap: 8px; align-items: baseline; text-align: left; background: transparent; color: inherit;
+  border: 0; padding: 4px 6px; border-radius: 8px; font: inherit; font-weight: inherit; box-shadow: none; }
+.draft-words .grow { overflow-wrap: anywhere; }
+.draft-words.picked { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.draft-num { flex: none; min-width: 1.5em; height: 1.5em; line-height: 1.5em; text-align: center; border-radius: 999px; background: var(--accent);
+  color: var(--on-accent); font-size: 0.8rem; font-weight: 700; }
+.draft-line.bold .grow { font-weight: 700; }
+.draft-line.waiting .grow, .draft-line.maybe .grow { color: var(--muted); }
+.draft-line.waiting .grow { font-style: italic; }
+.draft-note { margin: 4px 8px; color: var(--muted); font-style: italic; overflow-wrap: anywhere; }
+.draft-slot { margin: 4px 8px; padding: 4px 10px; border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); font-size: 0.85rem; width: fit-content; }
+@media (min-width: 900px) {
+  .draft-cols { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+}
