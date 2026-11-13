@@ -1370,7 +1370,8 @@ export function reflectionVideos(reflection) {
 // chats and papers in the top too, yes." So: five along the top, the rest
 // down the side in groups. The keys are the old tab keys, so "#lessons" and
 // the rest still work.
-export const TOP_TABS = [["today", "Today"], ["tasks", "Tasks"], ["rewards", "Rewards"],
+// 2026-11-13: Drafts, next to Today ("something in the PWA ... that feels like writing email drafts").
+export const TOP_TABS = [["today", "Today"], ["drafts", "Drafts"], ["tasks", "Tasks"], ["rewards", "Rewards"],
                          ["chats", "Chats"], ["papers", "Papers"]];
 // 2026-10-10q: Calendar (drag a task to another day) and Notes (the same
 // notes as the tutor's Notes tab) are down the side, in a group of their own.
@@ -1683,7 +1684,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v104";   // 2026-11-10e: was v103 (2026-11-10: was v102 (2026-11-07b: was v101 (2026-11-07: was v100 (2026-11-06c: was v99 (2026-10-30e: was v98 (2026-10-30d: was v97 (2026-10-30c: was v96 (2026-10-30b: was v95 (2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81)))))))))))
+export const APP_VERSION = "v105";   // 2026-11-13: was v104 (2026-11-10e: was v103 (2026-11-10: was v102 (2026-11-07b: was v101 (2026-11-07: was v100 (2026-11-06c: was v99 (2026-10-30e: was v98 (2026-10-30d: was v97 (2026-10-30c: was v96 (2026-10-30b: was v95 (2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81))))))))))))
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -3509,4 +3510,231 @@ export function alarmLabel(at, now) {
   if (isNaN(d)) return "";
   const left = daysUntil(isoDay(d), now || new Date());
   return clock12(d) + (left === 0 ? "" : left === 1 ? " tomorrow" : " " + d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }));
+}
+
+// ---- 2026-11-13: drafts (main.py draft_parse, the same rules). "I write my
+// to-dos in email drafts. One draft for general stuff, and if two subjects
+// are major right now (like DT and Maths), each one gets its own draft. Then
+// I pull the bits I'm doing today into one big email that's my to-do list
+// for the day. I like it because it's just typing: no boxes, no dates, no
+// dragging. Fast, messy, mine." A draft is plain text and is never
+// rewritten: this only READS it. ">" a task, "'-->" a step under it, "'->"
+// with extra indent a step under that step, "subject ; thing", a heading
+// makes everything under it that subject, "(?)" not sure, "NOT POSTED YET"
+// waiting, "!" or CAPITALS matter more, "~" on the end ongoing, a bare ">"
+// or "'-->" an empty slot ("Never delete it, never count it as a task,
+// never ask me about it"), a ">" in the middle of a line chains the next
+// step on. "If a symbol shows up that's not in this list, ask me once what
+// it means. Don't guess."
+const DRAFT_TASK = /^(\s*)>\s*(.*?)\s*$/;
+const DRAFT_STEP = /^(\s*)'?\s*-{1,3}>\s*(.*?)\s*$/;
+const DRAFT_MAYBE = /\(\s*\?\s*\)/g;
+const DRAFT_WAITING = /\bnot\s+posted(?:\s+yet)?\b/gi;
+const DRAFT_CHAIN = /\s*(?<!-)>\s*/;
+const DRAFT_CAPS = /(?<![A-Za-z])[A-Z][A-Z'&/]{2,}(?![a-z])/;
+const DRAFT_SEMI = /^\s*([A-Za-z&. ]{2,24}?)\s*;\s*\S/;
+const DRAFT_HEAD_FOR = /^(?:this\s+is\s+)?for\s+.+?\s+(?:tasks?|stuff|to[\s-]*dos?)(?:\s+only)?\s*[:;]?\s*$/i;
+const DRAFT_HEAD_TODO = /^.{0,30}?\b(?:to[\s-]*dos?|tasks?|list)\s*[:;]?\s*$/i;
+const DRAFT_HEAD_MAX = 60;
+const DRAFT_SYMBOL_START = /^([*+=#~|^%$@&/\\<_\-•·]{1,3})\s*(\S.*)$/;
+const DRAFT_SYMBOL_END = /\s([*+=#|^%$@\\<_\-]{1,3})$/;
+export const DRAFT_START_MEANS = [["A task", "task"], ["A step", "step"], ["Just a note", "note"]];
+export const DRAFT_END_MEANS = [["Nothing", "ignore"], ["It matters more", "big"], ["Ongoing", "ongoing"], ["Not sure it's needed", "maybe"]];
+export const DRAFT_MOST = 12;
+export const DRAFT_TEXT_MAX = 20000;
+const DRAFT_HEAD_SUBJECTS = { fr: "french", mathematics: "maths", "design tech": "dt" };
+// The subject a line that's only a subject names ("bio", "Chemistry:").
+function draftHeadSubject(text) {
+  const low = String(text || "").trim().replace(/[:;]+$/, "").replace(/\s+/g, " ").trim().toLowerCase();
+  const hit = SUBJECT_WORDS.find(([w]) => w === low);
+  return hit ? hit[1] : (DRAFT_HEAD_SUBJECTS[low] || "");
+}
+export function draftNorm(words) {
+  return String(words || "").replace(new RegExp("^\\s*" + TODAY_GIFT + "\\s*", "u"), "").trim().replace(COUNTER_RE, "$1")
+    .replace(/\s+/g, " ").trim().toLowerCase().replace(/:+$/, "").trim();
+}
+function draftFlags(words, known) {
+  const w = String(words || "");
+  const bare = w.replace(DRAFT_MAYBE, " ").replace(DRAFT_WAITING, " ");
+  const out = { maybe: new RegExp(DRAFT_MAYBE.source).test(w), waiting: new RegExp(DRAFT_WAITING.source, "i").test(w),
+    big: bare.includes("!") || DRAFT_CAPS.test(bare), ongoing: w.trimEnd().endsWith("~"), ask: "" };
+  const end = w.match(DRAFT_SYMBOL_END);
+  if (end) {
+    const means = (known || {})["end " + end[1]];
+    if (means === "big") out.big = true;
+    else if (means === "ongoing") out.ongoing = true;
+    else if (means === "maybe") out.maybe = true;
+    else if (means !== "ignore") out.ask = "end " + end[1];
+  }
+  return out;
+}
+// {items, unknown}. An item: {line, kind (head, task, step, slot, note,
+// gap), depth, words (hers, as typed), parent (index, -1 none), subject,
+// key ("" when it can't be ticked), maybe, waiting, big, ongoing, chain}.
+export function draftParse(text, known) {
+  known = known || {};
+  const items = [], unknown = [], seen = new Map();
+  let section = "", task = -1, step = -1, stepIndent = 0;
+  const ask = (symbol) => { if (symbol && !unknown.includes(symbol) && !(symbol in known)) unknown.push(symbol); };
+  const add = (line, kind, words, depth, parent, subject, chain) => {
+    const item = { line, kind, depth: depth || 0, words, parent: parent === undefined ? -1 : parent, subject: subject || "", key: "",
+      maybe: false, waiting: false, big: false, ongoing: false, chain: Boolean(chain) };
+    if (kind === "task" || kind === "step") {
+      const flags = draftFlags(words, known);
+      ask(flags.ask);
+      delete flags.ask;
+      Object.assign(item, flags);
+      let key = draftNorm(words);
+      if (item.parent >= 0) {
+        key = items[item.parent].key + " > " + key;
+        item.maybe = item.maybe || items[item.parent].maybe;
+        item.waiting = item.waiting || items[item.parent].waiting;
+      }
+      seen.set(key, (seen.get(key) || 0) + 1);
+      if (seen.get(key) > 1) key = key + " #" + seen.get(key);
+      item.key = key;
+    }
+    items.push(item);
+    return items.length - 1;
+  };
+  const subjectFor = (words) => {
+    const semi = String(words || "").match(DRAFT_SEMI);
+    if (semi && draftHeadSubject(semi[1])) return draftHeadSubject(semi[1]);
+    return section || subjectOfWords(words);
+  };
+  const aTask = (line, words) => {
+    const parts = words.split(DRAFT_CHAIN).filter((p) => p.trim());
+    if (!parts.length) return add(line, "slot", "", 0, -1, section);
+    const top = add(line, "task", parts[0].trim(), 0, -1, subjectFor(parts[0]));
+    parts.slice(1).forEach((more) => add(line, "step", more.trim(), 1, top, items[top].subject, true));
+    return top;
+  };
+  String(text || "").replace(/\r\n?/g, "\n").split("\n").forEach((raw, line) => {
+    const row = raw.trim();
+    if (!row) { add(line, "gap", ""); return; }
+    const asStep = raw.match(DRAFT_STEP);
+    const asTask = asStep ? null : raw.match(DRAFT_TASK);
+    if (asTask) {
+      if (!asTask[2]) { add(line, "slot", "", 0, -1, section); return; }
+      task = aTask(line, asTask[2]);
+      step = -1; stepIndent = 0;
+      return;
+    }
+    if (asStep) {
+      const indent = asStep[1].replace(/\t/g, "  ").length;
+      const words = asStep[2];
+      if (task < 0) {
+        if (words) task = aTask(line, words); else add(line, "slot", "", 0, -1, section);
+        return;
+      }
+      const deep = step >= 0 && indent > stepIndent;
+      const parent = deep ? step : task;
+      if (!words) { add(line, "slot", "", deep ? 2 : 1, parent, items[task].subject); return; }
+      const at = add(line, "step", words, deep ? 2 : 1, parent, items[task].subject);
+      if (!deep) { step = at; stepIndent = indent; }
+      return;
+    }
+    const bare = row.replace(/[:;]+$/, "").trim();
+    if (draftHeadSubject(bare) || DRAFT_HEAD_FOR.test(row) || DRAFT_HEAD_TODO.test(row) ||
+        (/[:;]$/.test(row) && bare.length <= DRAFT_HEAD_MAX)) {
+      section = draftHeadSubject(bare) || subjectOfWords(bare);
+      add(line, "head", row, 0, -1, section);
+      task = -1; step = -1;
+      return;
+    }
+    const mark = row.match(DRAFT_SYMBOL_START);
+    if (mark) {
+      const means = known["start " + mark[1]];
+      if (means === "task") { task = aTask(line, mark[2]); step = -1; stepIndent = 0; return; }
+      if (means === "step" && task >= 0) { step = add(line, "step", mark[2], 1, task, items[task].subject); stepIndent = 0; return; }
+      if (means !== "note") ask("start " + mark[1]);
+    }
+    add(line, "note", row, 0, -1, section);
+  });
+  return { items, unknown };
+}
+function draftKids(items, at) {
+  const out = [];
+  items.forEach((item, n) => {
+    let up = item.parent;
+    while (up >= 0 && up !== at) up = items[up].parent;
+    if (up === at && n !== at) out.push(n);
+  });
+  return out;
+}
+// The steps under an item that are ticked themselves (nothing under them).
+export function draftLeaves(items, at) {
+  return draftKids(items, at).filter((n) => items[n].kind === "step" &&
+    !draftKids(items, n).some((k) => items[k].kind === "step"));
+}
+// "When every step under a task is done, the task is done."
+export function draftDone(items, at, done) {
+  const leaves = draftLeaves(items, at);
+  if (leaves.length) return leaves.every((n) => done.has(items[n].key));
+  return done.has(items[at].key);
+}
+// What she picked, in her order, as her own "> task" / "'--> step" lines
+// (what the laptop puts on Today), and the keys that go.
+export function draftPickText(items, keys, done) {
+  done = done || new Set();
+  const by = new Map();
+  items.forEach((it, n) => { if (it.key) by.set(it.key, n); });
+  const blocks = [];
+  (keys || []).forEach((key) => {
+    const n = by.get(key);
+    if (n === undefined || items[n].waiting) return;
+    let top = n;
+    while (items[top].parent >= 0) top = items[top].parent;
+    let block = blocks.find((b) => b.top === top);
+    if (!block) { block = { top, steps: [] }; blocks.push(block); }
+    if (n === top) block.steps = null;
+    else if (block.steps) {
+      const leaves = draftLeaves(items, n);
+      (leaves.length ? leaves : [n]).forEach((leaf) => { if (!block.steps.includes(leaf)) block.steps.push(leaf); });
+    }
+  });
+  const lines = [], went = [];
+  blocks.forEach((block) => {
+    const steps = block.steps || draftLeaves(items, block.top).filter((n) => !done.has(items[n].key) && !items[n].waiting);
+    lines.push("> " + items[block.top].words);
+    went.push(items[block.top].key);
+    steps.forEach((n) => { lines.push("'--> " + items[n].words); went.push(items[n].key); });
+  });
+  return { text: lines.join("\n"), went };
+}
+// Her drafts off live/alldays: {list: [{id, name, text, version, done (Set), sent (Set)}], symbols, known}.
+// known is false until the laptop has sent any (an older tutor never does).
+export function draftsOf(live) {
+  let held = null;
+  try { held = JSON.parse((live && live.data) || "null"); } catch (error) { held = null; }
+  const d = held && held.drafts && typeof held.drafts === "object" ? held.drafts : null;
+  const list = d && Array.isArray(d.list) ? d.list : [];
+  return { known: Boolean(d),
+    list: list.filter((x) => x && x.id).map((x) => ({ id: String(x.id), name: String(x.name || "Draft"), text: String(x.text || ""),
+      version: String(x.version || ""), done: new Set((x.done || []).map(String)), sent: new Set((x.sent || []).map(String)) })),
+    symbols: d && d.symbols && typeof d.symbols === "object" ? { ...d.symbols } : {} };
+}
+// The one question about a symbol she hasn't explained: {symbol, words, choices}.
+export function draftAsk(symbol) {
+  const at = String(symbol || "").indexOf(" ");
+  const where = String(symbol || "").slice(0, at), mark = String(symbol || "").slice(at + 1);
+  return { symbol, words: "What does “" + mark + "” at the " + (where === "start" ? "start" : "end") + " of a line mean?",
+    choices: where === "start" ? DRAFT_START_MEANS : DRAFT_END_MEANS };
+}
+// A draft's box against the laptop's copy, the same way as her notes: the
+// box is hers while she's typing or waiting for the laptop to take it.
+//   box: {text, dirty, base, sent: {text, base, atMs} | null}; snap: {text, version} | null
+export function draftIncoming(box, snap, nowMs) {
+  const keep = { set: false, text: box.text, base: box.base, sent: box.sent || null, words: "" };
+  if (box.dirty) return { ...keep, words: "Typing. It saves when you stop." };
+  if (!snap) return { ...keep, words: box.sent ? "Sent. The laptop takes it in a few seconds while the tutor is open." : "" };
+  const theirs = String(snap.text || ""), version = String(snap.version || "");
+  let sent = box.sent || null;
+  if (sent) {
+    if (theirs === sent.text) sent = null;
+    else if (version === sent.base && nowMs - sent.atMs < 90000) return { ...keep, words: "Sent. The laptop takes it in a few seconds while the tutor is open." };
+    else sent = null;
+  }
+  if (theirs === box.text) return { set: false, text: theirs, base: version, sent, words: "Saved on the laptop." };
+  return { set: true, text: theirs, base: version, sent, words: "Saved on the laptop." };
 }
