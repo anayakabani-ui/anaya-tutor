@@ -50,7 +50,7 @@ import { noteLines, todayLines, todayLook, alarmsOf, alarmWhen, alarmOptions, al
          carryOf, treatsCarry, carryWords, spinGroups, SPIN_OTHER, pickableLines,
          spinPrioGroups, SPIN_PRIO_COLOURS, sortOf, prevPrioDay, importPrio, sortPrio, quickStars, quickPick,
          draftParse, draftLeaves, draftDone, draftPickText, draftsOf, draftAsk, draftIncoming, DRAFT_MOST, DRAFT_TEXT_MAX,
-         draftSelectKeys, draftMarksClean, draftMarksSame, draftPieces } from "./logic.js";   // 2026-11-13c   // 2026-11-13: drafts   // 2026-10-23   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
+         draftSelectKeys, draftMarksClean, draftMarksSame, draftPieces, draftSplitFix, draftColour } from "./logic.js";   // 2026-11-13c   // 2026-11-13: drafts   // 2026-10-23   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
 
 const $ = (id) => document.getElementById(id);
 // 2026-10-18b: a line's subject, by its words, from the bank's subject lists.
@@ -7218,12 +7218,36 @@ function draftBox(d) {
   }
   return box;
 }
+// 2026-11-19: "it shoudl be able to auto fix it". When she stops typing, a
+// ">" in the middle of a line goes on its own line (">>" is a bold literal
+// one), in the box too, with the cursor where it was in her words.
+function draftFixBox(id, box) {
+  const fix = draftSplitFix(box.text, box.marks);
+  if (!fix.changed) return false;
+  const shown = drafts.shown === id && drafts.area;
+  let caret = -1;
+  if (shown) {
+    const sel = getSelection();
+    if (document.activeElement === drafts.area && sel.rangeCount && drafts.area.contains(sel.anchorNode)) {
+      caret = draftScan(drafts.area, { probes: [[sel.anchorNode, sel.anchorOffset]] }).at[0];
+    }
+  }
+  box.text = fix.text;
+  box.marks = fix.marks;
+  if (shown) {
+    draftWrite(drafts.area, box.text, box.marks);
+    if (caret >= 0) { const c = fix.map[Math.min(caret, fix.map.length - 1)]; draftSetSel(c, c); }
+    drafts.sayOnce = "Put each > on its own line. Type >> for a > that stays.";
+  }
+  return true;
+}
 function draftSend(id) {
   const box = drafts.boxes.get(id);
   if (!box) return Promise.resolve(false);
   clearTimeout(box.timer);
   box.timer = null;
   if (!box.dirty || !cloud) return Promise.resolve(false);
+  draftFixBox(id, box);
   const d = draftList().list.find((x) => x.id === id);
   const text = box.text.slice(0, DRAFT_TEXT_MAX), base = box.base;
   const marks = draftMarksClean(box.marks, text);
@@ -7572,6 +7596,7 @@ function drawDrafts() {
       drawDrafts();
     });
     chip.setAttribute("aria-pressed", String(one.id === drafts.current));
+    chip.style.setProperty("--chip", draftColour(one.name));   // 2026-11-19: "colour draft names too"
     drafts.chips.append(chip);
   });
   const naming = (mode, value) => {
