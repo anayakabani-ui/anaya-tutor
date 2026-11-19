@@ -1684,7 +1684,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v106";   // 2026-11-13c: was v105 (2026-11-13: was v104 (2026-11-10e: was v103 (2026-11-10: was v102 (2026-11-07b: was v101 (2026-11-07: was v100 (2026-11-06c: was v99 (2026-10-30e: was v98 (2026-10-30d: was v97 (2026-10-30c: was v96 (2026-10-30b: was v95 (2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81))))))))))))
+export const APP_VERSION = "v107";   // 2026-11-19: was v106 (2026-11-13c: was v105 (2026-11-13: was v104 (2026-11-10e: was v103 (2026-11-10: was v102 (2026-11-07b: was v101 (2026-11-07: was v100 (2026-11-06c: was v99 (2026-10-30e: was v98 (2026-10-30d: was v97 (2026-10-30c: was v96 (2026-10-30b: was v95 (2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81)))))))))))))
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -3603,7 +3603,8 @@ export function draftParse(text, known) {
     return section || subjectOfWords(words);
   };
   const aTask = (line, words) => {
-    const parts = words.split(DRAFT_CHAIN).filter((p) => p.trim());
+    // 2026-11-19: only where the fix would make a new line (1>2, a -> b stay)
+    const parts = draftSplitFix("> " + words, []).text.split("\n").map((p, i) => i ? p.replace(/^\s*(?:'?\s*-{1,3}>|>)\s*/, "") : p.replace(/^> /, "")).filter((p) => p.trim());
     if (!parts.length) return add(line, "slot", "", 0, -1, section);
     const top = add(line, "task", parts[0].trim(), 0, -1, subjectFor(parts[0]));
     parts.slice(1).forEach((more) => add(line, "step", more.trim(), 1, top, items[top].subject, true));
@@ -3799,3 +3800,79 @@ export function draftIncoming(box, snap, nowMs) {
   if (theirs === box.text && draftMarksSame(theirMarks, box.marks)) return { set: false, text: theirs, marks: theirMarks, base: version, sent, words: "Saved on the laptop." };
   return { set: true, text: theirs, marks: theirMarks, base: version, sent, words: "Saved on the laptop." };
 }
+
+// ---- 2026-11-19: "it cant interpret it properly and it shoudl be able to
+// auto fix it ... unless its a number like 1>2 ... i can manually override
+// if i type >> which replaces it with a bold >". A ">" (or a "'-->") in the
+// middle of a line starts its own line, under the same indent. A ">" between
+// two numbers (1>2, 5 > 3), an arrow (->, =>), a "<...>" and ":>" stay. ">>"
+// becomes one bold literal \uFF1E that is never read as a task.
+// draft_split_fix in main.py is the same.
+export const DRAFT_LITERAL = "\uFF1E";
+export function draftSplitFix(text, marks) {
+  const src = String(text || "");
+  const map = new Array(src.length + 1).fill(0);
+  let out = "";
+  const bold = [];
+  const lines = src.split("\n");
+  let pos = 0;
+  const digit = (c) => c !== undefined && /[0-9]/.test(c);
+  lines.forEach((line, li) => {
+    const indent = line.match(/^[ \t]*/)[0];
+    const lead = line.slice(indent.length).match(/^(?:'?[ \t]*-{1,3}>|>(?!>))/);
+    const head = indent.length + (lead ? lead[0].length : 0);
+    let angle = false;
+    for (let j = 0; j < line.length; j++) {
+      const c = line[j];
+      if (j < head) { map[pos + j] = out.length; out += c; continue; }
+      if (c === ">" && line[j + 1] === ">") {
+        map[pos + j] = out.length; map[pos + j + 1] = out.length;
+        bold.push(out.length); out += DRAFT_LITERAL; j += 1; continue;
+      }
+      const step = c === "'" ? line.slice(j).match(/^'[ \t]*-{1,3}>/) : null;
+      if (step) {
+        out += "\n" + indent;
+        for (let k = 0; k < step[0].length; k++) { map[pos + j + k] = out.length; out += line[j + k]; }
+        j += step[0].length - 1;
+        angle = false;
+        continue;
+      }
+      if (c === "<") angle = true;
+      if (c === ">") {
+        const prev = line[j - 1];
+        const before = line.slice(0, j).trimEnd(), after = line.slice(j + 1).trimStart();
+        const keep = angle || "-=<:".includes(prev || "") || (digit(before[before.length - 1]) && digit(after[0]));
+        angle = false;
+        if (!keep) { out += "\n" + indent; map[pos + j] = out.length; out += c; continue; }
+      }
+      map[pos + j] = out.length; out += c;
+    }
+    map[pos + line.length] = out.length;
+    pos += line.length + 1;
+    if (li < lines.length - 1) out += "\n";
+  });
+  map[src.length] = out.length;
+  const moved = [];
+  (Array.isArray(marks) ? marks : []).forEach((m) => {
+    if (!Array.isArray(m)) return;
+    const a = Math.trunc(Number(m[0])), b = Math.trunc(Number(m[1]));
+    if (!(a >= 0 && b > a && b <= src.length)) return;
+    moved.push([map[a], map[b], String(m[2] || "")]);
+  });
+  bold.forEach((at) => moved.push([at, at + 1, "b"]));
+  return { text: out, marks: draftMarksClean(moved, out), changed: out !== src, map };
+}
+
+// 2026-11-19: "and colour draft names too". A draft named after a subject
+// (DT, Maths, geography) is that subject's colour, the rest get their own
+// colour off the name (the same one every time, on every device).
+export function draftColour(name) {
+  const plain = String(name || "").trim();
+  const subj = subjectColour(plain) || subjectColour(draftHeadSubject(plain));
+  if (subj) return subj;
+  let h = 0;
+  for (const ch of plain.toLowerCase()) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+  return DRAFT_SWATCHES[h % DRAFT_SWATCHES.length];
+}
+// none of them a subject's colour (main.py DRAFT_SWATCHES is the same)
+export const DRAFT_SWATCHES = ["#F2A93B", "#14B8A6", "#0EA5E9", "#EA580C", "#64748B", "#CA8A04", "#0F766E", "#C026D3"];
