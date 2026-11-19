@@ -1382,3 +1382,10 @@ textarea.today-paste { width: 100%; box-sizing: border-box; font: inherit; font-
 .draft-head .grow { overflow-wrap: anywhere; }
 .draft-head.picked { background: color-mix(in srgb, var(--accent) 14%, transparent); border-radius: 8px; }
 .draft-line.done .grow { text-decoration: line-through; }
+
+/* 2026-11-19: "and colour draft names too". Each draft chip in its own colour
+   (a subject's colour when it's named after one). */
+.draft-chip:not(.new):not(.draft-tool) { border: 2px solid var(--chip, var(--line)); background: color-mix(in srgb, var(--chip, transparent) 14%, var(--card)); }
+.draft-chip:not(.new):not(.draft-tool)::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--chip, var(--muted)); margin-right: 8px; vertical-align: 1px; }
+.draft-chip.on:not(.new):not(.draft-tool) { background: var(--chip, var(--accent)); border-color: var(--chip, var(--accent)); color: #fff; }
+.draft-chip.on:not(.new):not(.draft-tool)::before { background: #fff; }
