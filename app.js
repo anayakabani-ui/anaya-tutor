@@ -7697,6 +7697,21 @@ function drawDraftLook() {
     drafts.ask.append(el("p", "draft-ask-words", q.words), row);
   }
   drafts.bar.replaceChildren();
+  // 2026-11-20: "there is no longer an add all option for drafts". Every
+  // open task in this draft not already on a day, in her order.
+  const everyKey = [];
+  items.forEach((it, n) => {
+    if (it.kind === "task" && it.parent < 0) draftSelectKeys(items, n, done).forEach((k) => { if (!placed.has(k) && !everyKey.includes(k)) everyKey.push(k); });
+  });
+  const allOn = everyKey.length > 0 && everyKey.every((k) => drafts.picks.includes(k));
+  // "obviously a confirm thing before adding all for ENITRE drafts": it
+  // only picks them all; nothing goes till she presses Put.
+  const pickAll = everyKey.length && !allOn ? button("Add all " + everyKey.length, "soft draft-all", () => {
+    everyKey.forEach((k) => { if (!drafts.picks.includes(k)) drafts.picks.push(k); });
+    drafts.sayOnce = "All " + drafts.picks.length + " picked. Nothing's added yet: press Put to add them, or Clear.";
+    drafts.said.textContent = drafts.sayOnce;
+    drawDraftLook();
+  }) : null;
   if (drafts.picks.length) {
     // 2026-11-13c: "put till tomorrow etc if im planning for tomorrow"
     const tomorrowIso = isoDay(new Date(Date.now() + 86400000));
@@ -7729,7 +7744,9 @@ function drawDraftLook() {
       drafts.sayOnce = ok ? "On its way to " + draftDayWords(dayIso) + ". It shows there in a few seconds while the tutor is open." : "Couldn't send that. Are you online?";
       drawDrafts();
     }), button("Clear", "soft", () => { drafts.picks = []; drawDraftLook(); }));
+    if (pickAll) drafts.bar.append(pickAll);
   } else if (items.some((i) => i.key)) {
+    if (pickAll) drafts.bar.append(pickAll);
     drafts.bar.append(el("p", "muted", "Tap lines to pick them, as many as you like, in the order you want them. A heading picks all its tasks, a task its steps, a step only itself. A box ticks one."));
   }
   drafts.look.replaceChildren();
