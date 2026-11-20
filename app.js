@@ -50,7 +50,8 @@ import { noteLines, todayLines, todayLook, alarmsOf, alarmWhen, alarmOptions, al
          carryOf, treatsCarry, carryWords, spinGroups, SPIN_OTHER, pickableLines,
          spinPrioGroups, SPIN_PRIO_COLOURS, sortOf, prevPrioDay, importPrio, sortPrio, quickStars, quickPick,
          draftParse, draftLeaves, draftDone, draftPickText, draftsOf, draftAsk, draftIncoming, DRAFT_MOST, DRAFT_TEXT_MAX,
-         draftSelectKeys, draftMarksClean, draftMarksSame, draftPieces, draftSplitFix, draftColour } from "./logic.js";   // 2026-11-13c   // 2026-11-13: drafts   // 2026-10-23   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
+         draftSelectKeys, draftMarksClean, draftMarksSame, draftPieces, draftSplitFix, draftColour,
+         companionOf, taskBarLeft, taskBarLook, taskBarWords, projectPct, lettersUnread } from "./logic.js";   // 2026-11-20c   // 2026-11-13c   // 2026-11-13: drafts   // 2026-10-23   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
 
 const $ = (id) => document.getElementById(id);
 // 2026-10-18b: a line's subject, by its words, from the bank's subject lists.
@@ -84,6 +85,9 @@ function button(text, cls, onClick) {
 }
 
 const state = { tasks: [], exams: [], timetable: [], visits: [], day: null, meta: null,
+                barOpen: false, barSent: null,              // 2026-11-20c: the task bar
+                mailOpen: null, mailRead: new Set(), companionSig: "",   // 2026-11-20c: letters
+
                 reflections: [], chats: [], materials: [],
                 asked: null,          // the Sync now she pressed: {stamp, atMs}
                 chatView: null,       // "new", or the id of the chat that's open
@@ -5377,6 +5381,7 @@ function drawRewards() {
     top.append(save);
   }
   box.append(top);
+  try { drawCompanionCards(box); } catch (error) { /* never stops the page */ }   // 2026-11-20c
   if (!bank) return;
   const list = el("div", "reward-list");
   (bank.rewards || []).forEach((reward) => {
@@ -7831,6 +7836,7 @@ function drawDraftLook() {
 }
 
 function drawAll() {
+  try { drawTaskBar(); } catch (error) { /* never stops the page */ }   // 2026-11-20c
   drawRewards();
   try { drawDrafts(); } catch (error) { /* never stops the page */ }   // 2026-11-13
   drawLessons();
@@ -7843,6 +7849,220 @@ function drawAll() {
   // The form and an open paper are left alone while she's using them.
   if (state.chatView !== "new") drawChats();
   if (!state.fileView) drawPapers();
+}
+
+// ---- 2026-11-20c: the website catches up. Her pick (20 Nov): "Website
+// catch-up (v109)". What the laptop got on the 20th shows here too, from
+// live/alldays ("companion"), so no new listener (the cloud's free reads):
+//  - the task bar. Her words: "SET FREAKIN TIMERS FOR IT ALL! ... i want it
+//    to be a VISUAL timer" / "for the bar on the top, ensure that it is
+//    draggable" / "and minimizable like i can make it smaller in width which
+//    will change its scale but still show thev visiual represetnation". Here
+//    it sits across the top of whatever page she's on. Smaller makes it a
+//    thin strip (still drawn, words shorter). Tap it for the buttons; when
+//    the time's up they come up by themselves, like the laptop's card.
+//  - the cat's and the Clan's projects, and clan mail, on the Rewards page.
+//    A new letter gets a little card here too ("Graystripe left you a
+//    letter."), read here = read on the laptop.
+const BAR_SENT_MS = 90000;
+function companionNow() { return companionOf(state.alldays); }
+function barSig(bar) { return bar ? [bar.start, bar.est, bar.extra, bar.paused, bar.paused_since, bar.up].join("|") : ""; }
+function barHost() {
+  let host = $("taskbar");
+  if (host) return host;
+  const main = $("main");
+  if (!main) return null;
+  host = el("section", "taskbar");
+  host.id = "taskbar";
+  host.hidden = true;
+  host.setAttribute("aria-label", "Task timer");
+  const head = main.querySelector("header");
+  if (head && head.nextSibling) main.insertBefore(host, head.nextSibling); else main.prepend(host);
+  return host;
+}
+function barSend(bar, what, minutes) {
+  state.barSent = { do: what, atMs: Date.now(), was: barSig(bar) };
+  state.barOpen = false;
+  if (what === "done") cheer();
+  sendEdit({ kind: "task_bar", do: what, minutes: minutes || 0 }).catch(() => {});
+  drawTaskBar();
+}
+function drawTaskBar() {
+  const host = barHost();
+  if (!host) return;
+  const c = companionNow();
+  const bar = c && c.bar;
+  if (state.barSent && (Date.now() - state.barSent.atMs > BAR_SENT_MS || state.barSent.was !== barSig(bar))) state.barSent = null;
+  if (!bar) { host.hidden = true; host.replaceChildren(); state.barOpen = false; return; }
+  const small = recall("tutor-bar-small", false) === true;
+  host.hidden = false;
+  host.className = "taskbar" + (small ? " small" : "");
+  host.replaceChildren();
+  const track = el("button", "taskbar-track");
+  track.type = "button";
+  track.setAttribute("aria-expanded", String(Boolean(state.barOpen)));
+  track.append(el("span", "taskbar-fill"), el("span", "taskbar-project"), el("span", "taskbar-words"));
+  track.addEventListener("click", () => { state.barOpen = !state.barOpen; drawTaskBar(); });
+  host.append(track);
+  const n = taskBarLeft(bar, Date.now());
+  const over = n.left <= 0;
+  if (state.barSent) {
+    host.append(el("p", "taskbar-note muted", "Telling the laptop. A few seconds while the tutor is open."));
+  } else if (over || state.barOpen) {
+    const box = el("div", "taskbar-buttons");
+    if (over) box.append(el("p", "taskbar-up", "Time's up on " + bar.label + "."));
+    const row = el("div", "taskbar-row");
+    if (over) {
+      row.append(button("Done", "", () => barSend(bar, "done")),
+                 button("5 more min", "soft", () => barSend(bar, "more", 5)),
+                 button("10 more min", "soft", () => barSend(bar, "more", 10)),
+                 button("Switch task", "soft", () => barSend(bar, "switch")));
+    } else {
+      row.append(button(n.paused ? "Back to it" : "Pause", "soft", () => barSend(bar, n.paused ? "resume" : "pause")),
+                 button("+5 min", "soft", () => barSend(bar, "more", 5)),
+                 button("+10 min", "soft", () => barSend(bar, "more", 10)),
+                 button("Done", "", () => barSend(bar, "done")),
+                 button("Switch task", "soft", () => barSend(bar, "switch")));
+    }
+    row.append(button(small ? "Bigger" : "Smaller", "quiet taskbar-size", () => { keep("tutor-bar-small", !small); drawTaskBar(); }));
+    box.append(row);
+    host.append(box);
+  }
+  host.dataset.over = over ? "1" : "";
+  paintTaskBar();
+  barTicker();
+}
+function paintTaskBar() {
+  const host = $("taskbar");
+  if (!host || host.hidden) return;
+  const c = companionNow();
+  const bar = c && c.bar;
+  if (!bar) { drawTaskBar(); return; }
+  const n = taskBarLeft(bar, Date.now());
+  if ((n.left <= 0) !== (host.dataset.over === "1")) { drawTaskBar(); return; }
+  const look = taskBarLook(n);
+  const track = host.querySelector(".taskbar-track");
+  if (!track) return;
+  track.dataset.kind = look.kind;
+  track.classList.toggle("paused", n.paused);
+  host.querySelector(".taskbar-fill").style.width = (look.frac * 100).toFixed(2) + "%";
+  const words = taskBarWords(bar.label, n, track.getBoundingClientRect().width || 400);
+  host.querySelector(".taskbar-words").textContent = words;
+  track.setAttribute("aria-label", bar.label + ": " + (n.left >= 0 ? taskBarWords(bar.label, n, 300) : "time's up, " + taskBarWords(bar.label, n, 300)));
+  const line = host.querySelector(".taskbar-project");
+  if (c.cat) {
+    line.style.width = "calc((100% - 24px) * " + (projectPct(c.cat) / 100).toFixed(3) + ")";
+    line.style.background = c.cat.colour;
+    line.hidden = false;
+  } else line.hidden = true;
+}
+let barClock = null;
+function barTicker() {
+  if (barClock) return;
+  barClock = setInterval(() => {
+    try {
+      if (!$("taskbar") || $("taskbar").hidden) { clearInterval(barClock); barClock = null; return; }
+      paintTaskBar();
+    } catch (error) { /* never stops the page */ }
+  }, 1000);
+}
+
+// the projects and the letters, on the Rewards page. Redrawn only when they
+// changed, so a box she's typing in there isn't wiped by every list change.
+function companionRewards() {
+  const c = companionNow();
+  const sig = c ? JSON.stringify([c.cat, c.clan, c.letters]) : "";
+  if (sig === state.companionSig) return;
+  state.companionSig = sig;
+  drawRewards();
+}
+function projectRow(who, colour, words, p) {
+  const item = el("div", "project-row");
+  const head = el("p", "project-words");
+  if (colour) { const dot = el("span", "project-dot"); dot.style.background = colour; head.append(dot); }
+  head.append(document.createTextNode(who + " " + words));
+  const pct = projectPct(p);
+  const track = el("div", "project-track");
+  track.setAttribute("role", "progressbar");
+  track.setAttribute("aria-valuemin", "0"); track.setAttribute("aria-valuemax", "100"); track.setAttribute("aria-valuenow", String(pct));
+  track.setAttribute("aria-label", who + " " + words);
+  const fill = el("span", "project-fill");
+  fill.style.width = pct + "%";
+  if (colour) fill.style.background = colour;
+  track.append(fill);
+  const side = el("p", "project-side muted", pct + "%" + (p.n ? "  ·  " + p.n + " finished" : ""));
+  item.append(head, track, side);
+  return item;
+}
+function letterRead(letter) {
+  state.mailOpen = letter.at;
+  if (!letter.read && !state.mailRead.has(letter.at)) {
+    state.mailRead.add(letter.at);
+    sendEdit({ kind: "mail_read", at: letter.at }).catch(() => {});
+  }
+}
+function drawCompanionCards(box) {
+  const c = companionNow();
+  if (!c) return;
+  if (c.cat || c.clan) {
+    const card = el("section", "ring-card project-card");
+    card.append(el("p", "ring-kicker", "Projects"));
+    if (c.cat) card.append(projectRow(c.cat.name, c.cat.colour, "is " + c.cat.what, c.cat));
+    if (c.clan) card.append(projectRow("The Clan", "", "is building " + c.clan.what, c.clan));
+    card.append(el("p", "muted", "Both only move while you're working: a task running, a timer, revising or lock in."));
+    box.append(card);
+  }
+  const card = el("section", "ring-card mail-card");
+  const fresh = c.letters.filter((l) => !l.read && !state.mailRead.has(l.at));
+  card.append(el("p", "ring-kicker", "Letters" + (fresh.length ? "  ·  " + fresh.length + " new" : "")));
+  if (!c.letters.length) card.append(el("p", "muted", "No letters yet. Ticking things off sometimes brings one (3 a day at most)."));
+  const list = el("ul", "letters");
+  const order = c.letters.slice().reverse().sort((a, b) => Number(a.read || state.mailRead.has(a.at)) - Number(b.read || state.mailRead.has(b.at)));
+  order.forEach((letter) => {
+    const isNew = !letter.read && !state.mailRead.has(letter.at);
+    const item = el("li", "letter" + (isNew ? " new" : ""));
+    item.style.setProperty("--cat", letter.colour);
+    let when = "";
+    try { const [d, t] = letter.at.split(" "); when = (d === isoDay(new Date()) ? "" : d.slice(8) + "/" + d.slice(5, 7) + " ") + clockWords(t.slice(0, 5)); } catch (error) { when = ""; }
+    if (state.mailOpen === letter.at) {
+      const body = el("div", "letter-body");
+      body.append(el("p", "", "Dear Anaya,"), el("p", "", letter.text), el("p", "letter-sign", letter.name));
+      item.append(body, button("Close", "quiet", () => { state.mailOpen = null; drawRewards(); }));
+    } else {
+      const open = button(isNew ? letter.name + " left you a letter. Read it" : letter.name + (when ? "  ·  " + when : ""), isNew ? "" : "quiet", () => { letterRead(letter); drawRewards(); });
+      open.classList.add("letter-open");
+      item.append(open);
+    }
+    list.append(item);
+  });
+  card.append(list);
+  box.append(card);
+  lettersTabDot(fresh.length);
+}
+function lettersTabDot(n) {
+  document.querySelectorAll('button[data-tab="rewards"]').forEach((b) => {
+    b.classList.toggle("has-new", n > 0);
+    if (n > 0) b.dataset.count = String(n); else delete b.dataset.count;
+  });
+}
+// A new letter while the page is open: a little card, once per letter.
+function mailToast() {
+  const c = companionNow();
+  if (!c) return;
+  const told = recall("tutor-mail-told", []);
+  const fresh = c.letters.filter((l) => !l.read && !state.mailRead.has(l.at) && !told.includes(l.at));
+  if (!fresh.length || document.querySelector(".mail-toast")) return;
+  const letter = fresh[fresh.length - 1];
+  keep("tutor-mail-told", told.concat(fresh.map((l) => l.at)).slice(-40));
+  const card = el("div", "mail-toast");   // its own, so it never stops the "look at your day" one
+  card.setAttribute("role", "status");
+  card.style.borderLeft = "4px solid " + letter.colour;
+  card.append(el("p", "", letter.name + " left you a letter."));
+  const row = el("div", "look-toast-row");
+  row.append(button("Read it", "", () => { card.remove(); letterRead(letter); selectTab("rewards"); drawRewards(); }),
+             button("Later", "quiet", () => card.remove()));
+  card.append(row);
+  document.body.append(card);
 }
 
 // ------------------------------------------------------- 2026-10-17: Tutor chat
@@ -8245,6 +8465,7 @@ function start() {
       drawTasks(); drawCalendarSoft(); drawPage();
       try { refreshAlarmList(); } catch (error) { /* never stops the page */ }   // 2026-11-10e
       try { drawDrafts(); } catch (error) { /* never stops the page */ }   // 2026-11-13: her drafts ride in this document
+      try { drawTaskBar(); companionRewards(); mailToast(); } catch (error) { /* never stops the page */ }   // 2026-11-20c: the bar, projects, letters ride here too
       try { treatsFromLaptop(); } catch (error) { /* never stops the page */ }   // 2026-10-21
       try { carryTreatsFromLaptop(); } catch (error) { /* never stops the page */ }   // 2026-10-23
       try { sortFromLaptop(); } catch (error) { /* never stops the page */ }   // 2026-10-24e
