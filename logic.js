@@ -1684,7 +1684,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v107";   // 2026-11-19: was v106 (2026-11-13c: was v105 (2026-11-13: was v104 (2026-11-10e: was v103 (2026-11-10: was v102 (2026-11-07b: was v101 (2026-11-07: was v100 (2026-11-06c: was v99 (2026-10-30e: was v98 (2026-10-30d: was v97 (2026-10-30c: was v96 (2026-10-30b: was v95 (2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81)))))))))))))
+export const APP_VERSION = "v108";   // 2026-11-20: was v107 (2026-11-19: was v106 (2026-11-13c: was v105 (2026-11-13: was v104 (2026-11-10e: was v103 (2026-11-10: was v102 (2026-11-07b: was v101 (2026-11-07: was v100 (2026-11-06c: was v99 (2026-10-30e: was v98 (2026-10-30d: was v97 (2026-10-30c: was v96 (2026-10-30b: was v95 (2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81))))))))))))))
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -3612,7 +3612,15 @@ export function draftParse(text, known) {
   };
   String(text || "").replace(/\r\n?/g, "\n").split("\n").forEach((raw, line) => {
     const row = raw.trim();
-    if (!row) { add(line, "gap", ""); return; }
+    // 2026-11-20: "there is a gap here. this means it is a seperate task
+    // that is not IN THAT LIST". A blank line ends the heading and the task.
+    // (one straight under the heading is just spacing)
+    if (!row) {
+      const afterHead = items.length && items[items.length - 1].kind === "head";
+      add(line, "gap", "");
+      if (!afterHead) { section = ""; task = -1; step = -1; }
+      return;
+    }
     let asStep = raw.match(DRAFT_STEP);
     let asTask = asStep ? null : raw.match(DRAFT_TASK);
     if (asTask && task >= 0 && asTask[1].replace(/\t/g, "  ").length > taskIndent) {
@@ -3725,6 +3733,9 @@ export function draftSelectKeys(items, at, done) {
     const out = [];
     for (let n = at + 1; n < items.length; n++) {
       if (items[n].kind === "head") break;
+      // 2026-11-20: "there is a gap here. this means it is a seperate task
+      // that is not IN THAT LIST". A blank line ends the heading's list.
+      if (items[n].kind === "gap" && items[n - 1].kind !== "head") break;
       if (items[n].kind === "task" && items[n].parent < 0) one(n).forEach((k) => { if (!out.includes(k)) out.push(k); });
     }
     return out;
