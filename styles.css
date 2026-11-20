@@ -1389,3 +1389,63 @@ textarea.today-paste { width: 100%; box-sizing: border-box; font: inherit; font-
 .draft-chip:not(.new):not(.draft-tool)::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--chip, var(--muted)); margin-right: 8px; vertical-align: 1px; }
 .draft-chip.on:not(.new):not(.draft-tool) { background: var(--chip, var(--accent)); border-color: var(--chip, var(--accent)); color: #fff; }
 .draft-chip.on:not(.new):not(.draft-tool)::before { background: #fff; }
+
+/* 2026-11-20c: the laptop's task bar, on every page ("i want it to be a
+   VISUAL timer" / "smaller ... but still show the visual"). Same colours as
+   the laptop: blue, amber under 20% left, purple for the extra she asked
+   for, red when it's up, faded when paused. The cat's project is the thin
+   line along its bottom. */
+.taskbar { position: sticky; top: 0; z-index: 30; padding: 6px 0 8px; background: var(--bg); }
+.taskbar-track {
+  position: relative; display: block; width: 100%; height: 30px; padding: 0; margin: 0;
+  border: 0; border-radius: 999px; overflow: hidden; cursor: pointer;
+  background: rgba(20, 30, 40, 0.80); color: #FFFFFF; box-shadow: none;
+}
+.taskbar.small .taskbar-track { height: 16px; width: min(100%, 320px); margin-left: auto; }
+.taskbar-fill {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 100%;
+  border-radius: 999px; background: #4C8DF6; transition: width 0.9s linear, background 0.3s;
+}
+.taskbar-track[data-kind="low"] .taskbar-fill { background: #F2A93B; }
+.taskbar-track[data-kind="extra"] .taskbar-fill { background: #C026D3; }
+.taskbar-track[data-kind="over"] .taskbar-fill { background: #E5484D; width: 100% !important; }
+.taskbar-track.paused .taskbar-fill { opacity: 0.47; }
+.taskbar-project {
+  position: absolute; left: 12px; bottom: 2px; height: 3px; border-radius: 3px; width: 0;
+}
+.taskbar.small .taskbar-project { height: 2px; bottom: 1px; }
+.taskbar-words {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  padding: 0 14px; font-weight: 700; font-size: 0.86rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.taskbar.small .taskbar-words { font-size: 0.68rem; }
+.taskbar-buttons { margin-top: 8px; }
+.taskbar-up { margin: 0 0 6px; font-weight: 700; color: var(--warn); }
+.taskbar-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.taskbar-row button { min-height: 36px; }
+.taskbar-size { margin-left: auto; }
+.taskbar-note { margin: 6px 0 0; font-size: 0.85rem; }
+
+/* 2026-11-20c: the cats' projects and their letters, on the Rewards page */
+.project-row { margin: 12px 0 0; }
+.project-words { margin: 0 0 6px; font-weight: 500; display: flex; align-items: center; gap: 8px; }
+.project-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.project-track { height: 10px; border-radius: 999px; background: var(--soft); overflow: hidden; }
+.project-fill { display: block; height: 100%; border-radius: 999px; background: var(--accent); }
+.project-side { margin: 4px 0 0; font-size: 0.82rem; }
+.letters { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
+.letter { border-left: 4px solid var(--cat, var(--accent)); padding: 4px 0 4px 10px; }
+.letter .letter-open { text-align: left; }
+.letter.new .letter-open { font-weight: 700; }
+.letter-body p { margin: 0 0 8px; line-height: 1.45; }
+.letter-sign { font-style: italic; }
+button.has-new[data-count]::after {
+  content: attr(data-count); display: inline-block; margin-left: 6px; min-width: 18px; padding: 0 5px;
+  border-radius: 999px; background: var(--warn); color: #FFFFFF; font-size: 0.72rem; line-height: 18px; text-align: center;
+}
+.mail-toast {
+  position: fixed; right: 16px; bottom: 16px; z-index: 51;
+  max-width: 300px; padding: 14px 16px; border-radius: 14px;
+  background: var(--card, #fff); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+}
+.mail-toast p { margin: 0 0 10px; font-weight: 500; }
