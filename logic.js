@@ -1684,7 +1684,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v108";   // 2026-11-20: was v107 (2026-11-19: was v106 (2026-11-13c: was v105 (2026-11-13: was v104 (2026-11-10e: was v103 (2026-11-10: was v102 (2026-11-07b: was v101 (2026-11-07: was v100 (2026-11-06c: was v99 (2026-10-30e: was v98 (2026-10-30d: was v97 (2026-10-30c: was v96 (2026-10-30b: was v95 (2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81))))))))))))))
+export const APP_VERSION = "v109";   // 2026-11-20c: was v108 (2026-11-20: was v107 (2026-11-19: was v106 (2026-11-13c: was v105 (2026-11-13: was v104 (2026-11-10e: was v103 (2026-11-10: was v102 (2026-11-07b: was v101 (2026-11-07: was v100 (2026-11-06c: was v99 (2026-10-30e: was v98 (2026-10-30d: was v97 (2026-10-30c: was v96 (2026-10-30b: was v95 (2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81)))))))))))))))
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -3887,3 +3887,95 @@ export function draftColour(name) {
 }
 // none of them a subject's colour (main.py DRAFT_SWATCHES is the same)
 export const DRAFT_SWATCHES = ["#F2A93B", "#14B8A6", "#0EA5E9", "#EA580C", "#64748B", "#CA8A04", "#0F766E", "#C026D3"];
+
+// ---- 2026-11-20c: the website catches up (her pick, "Website catch-up
+// (v109)"). The laptop's task bar, the cat's and the Clan's projects and the
+// clan mail ride in live/alldays as "companion":
+//   {bar: {label, start "YYYY-MM-DD HH:MM:SS", est, extra (minutes), paused
+//          (seconds), paused_since, up} or null,
+//    cat: {key, name, colour, what, min, goal, n}, clan: {what, min, goal, n},
+//    letters: [{at, from, name, colour, text, read}]}
+// The bar's sums are the laptop's (task_bar_left, TaskBar.words), so both
+// say the same thing at the same moment.
+export function stampMs(text) {
+  const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})(?::(\d{2}))?$/.exec(String(text || "").trim());
+  if (!m) return NaN;
+  return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)).getTime();
+}
+export function companionOf(live) {
+  let held = null;
+  try { held = JSON.parse((live && live.data) || "null"); } catch (error) { held = null; }
+  const c = held && held.companion;
+  if (!c || typeof c !== "object") return null;
+  const num = (x) => Math.max(0, Math.round(Number(x) || 0));
+  let bar = null;
+  const b = c.bar;
+  if (b && typeof b === "object" && !Number.isNaN(stampMs(b.start))) {
+    bar = { label: String(b.label || "Task"), start: String(b.start), est: num(b.est), extra: num(b.extra),
+            paused: num(b.paused), paused_since: String(b.paused_since || ""), up: String(b.up || "") };
+  }
+  const proj = (p, withCat) => {
+    if (!p || typeof p !== "object" || !String(p.what || "").trim()) return null;
+    const out = { what: String(p.what), min: num(p.min), goal: Math.max(1, num(p.goal)), n: num(p.n) };
+    if (withCat) { out.key = String(p.key || ""); out.name = String(p.name || "Your cat"); out.colour = /^#[0-9A-Fa-f]{6}$/.test(String(p.colour || "")) ? p.colour : "#7ED6DF"; }
+    return out;
+  };
+  const letters = (Array.isArray(c.letters) ? c.letters : []).filter((l) => l && String(l.text || "").trim() && l.at)
+    .map((l) => ({ at: String(l.at), from: String(l.from || ""), name: String(l.name || "A cat"),
+                   colour: /^#[0-9A-Fa-f]{6}$/.test(String(l.colour || "")) ? l.colour : "#7ED6DF",
+                   text: String(l.text), read: Boolean(l.read) }));
+  return { bar, cat: proj(c.cat, true), clan: proj(c.clan, false), letters };
+}
+// (seconds left, estimate seconds, extra seconds, paused); left < 0 is over
+export function taskBarLeft(bar, nowMs) {
+  if (!bar) return { left: 0, est: 1, extra: 0, paused: false };
+  const start = stampMs(bar.start);
+  const est = (Number(bar.est) || 0) * 60, extra = (Number(bar.extra) || 0) * 60;
+  let gone = (nowMs - start) / 1000 - (Number(bar.paused) || 0);
+  let paused = false;
+  const since = stampMs(bar.paused_since);
+  if (!Number.isNaN(since)) { gone -= (nowMs - since) / 1000; paused = true; }
+  return { left: Math.trunc(est + extra - gone), est, extra, paused };
+}
+// what colour and how full: the laptop's paintEvent
+export function taskBarLook(n) {
+  if (!n || n.left <= 0) return { kind: "over", frac: 1 };
+  let total = Math.max(1, n.est + n.extra);
+  let kind = "run";
+  if (n.extra > 0 && n.left <= n.extra) { total = n.extra; kind = "extra"; }
+  else if (n.left / total < 0.2) kind = "low";
+  return { kind, frac: Math.max(0, Math.min(1, n.left / total)) };
+}
+export function taskBarSpan(seconds) {
+  const s = Math.trunc(Math.abs(seconds));
+  if (s >= 3600) return Math.floor(s / 3600) + "h " + String(Math.floor((s % 3600) / 60)).padStart(2, "0") + "m";
+  if (s >= 60) return Math.floor((s + 59) / 60) + " min";
+  return s + "s";
+}
+export function taskBarWords(label, n, width) {
+  const short = n.left >= 0 ? taskBarSpan(n.left) : "+" + taskBarSpan(n.left);
+  let long = n.left >= 0 ? short + " left" : taskBarSpan(n.left) + " over";
+  if (n.paused) long += " (paused)";
+  if (width < 220) return short;
+  if (width < 380) return long;
+  return label + "  ·  " + long;
+}
+export function projectPct(p) {
+  if (!p) return 0;
+  return Math.max(0, Math.min(100, Math.floor(100 * p.min / Math.max(1, p.goal))));
+}
+export function lettersUnread(letters) {
+  return (letters || []).filter((l) => !l.read);
+}
+// main.py task_estimate_minutes: "(20m)", "20 min", "~30 mins", "1h", "1.5 hrs", "1 hr 30"
+export function taskEstimateMinutes(text) {
+  const low = " " + String(text || "").toLowerCase().replace(/\s+/g, " ") + " ";
+  const H = "(?:h|hr|hrs|hour|hours)", M = "(?:m|min|mins|minute|minutes)";
+  let f = new RegExp("(?<![\\d.])(\\d{1,2})\\s*" + H + "\\s*(\\d{1,2})\\s*" + M + "?(?![a-z])").exec(low);
+  if (f) return Number(f[1]) * 60 + Number(f[2]);
+  f = new RegExp("(?<![\\d.])(\\d{1,2}(?:\\.\\d+)?)\\s*" + H + "(?![a-z])").exec(low);
+  if (f) return Math.round(Number(f[1]) * 60);
+  f = new RegExp("(?<![\\d.])(\\d{1,3})\\s*" + M + "(?![a-z])").exec(low);
+  if (f && Number(f[1]) >= 1 && Number(f[1]) <= 300) return Number(f[1]);
+  return 0;
+}
