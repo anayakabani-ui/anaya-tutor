@@ -1401,7 +1401,8 @@ textarea.today-paste { width: 100%; box-sizing: border-box; font: inherit; font-
   border: 0; border-radius: 999px; overflow: hidden; cursor: pointer;
   background: rgba(20, 30, 40, 0.80); color: #FFFFFF; box-shadow: none;
 }
-.taskbar.small .taskbar-track { height: 16px; width: min(100%, 320px); margin-left: auto; }
+/* 2026-11-20f: "height doesnt have to get smaller honestly . i quite liked a slighlty thicker one": Smaller is narrower only */
+.taskbar.small .taskbar-track { width: min(100%, 320px); margin-left: auto; }
 .taskbar-fill {
   position: absolute; left: 0; top: 0; bottom: 0; width: 100%;
   border-radius: 999px; background: #4C8DF6; transition: width 0.9s linear, background 0.3s;
@@ -1413,12 +1414,10 @@ textarea.today-paste { width: 100%; box-sizing: border-box; font: inherit; font-
 .taskbar-project {
   position: absolute; left: 12px; bottom: 2px; height: 3px; border-radius: 3px; width: 0;
 }
-.taskbar.small .taskbar-project { height: 2px; bottom: 1px; }
 .taskbar-words {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   padding: 0 14px; font-weight: 700; font-size: 0.86rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.taskbar.small .taskbar-words { font-size: 0.68rem; }
 .taskbar-buttons { margin-top: 8px; }
 .taskbar-up { margin: 0 0 6px; font-weight: 700; color: var(--warn); }
 .taskbar-row { display: flex; flex-wrap: wrap; gap: 6px; }
