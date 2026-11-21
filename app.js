@@ -8009,7 +8009,8 @@ function drawCompanionCards(box) {
     card.append(el("p", "ring-kicker", "Projects"));
     if (c.cat) card.append(projectRow(c.cat.name, c.cat.colour, "is " + c.cat.what, c.cat));
     if (c.clan) card.append(projectRow("The Clan", "", "is building " + c.clan.what, c.clan));
-    card.append(el("p", "muted", "Both only move while you're working: a task running, a timer, revising or lock in."));
+    // 2026-11-21: "this was going while i wasnt on a timer- and this is odd": lock in alone doesn't move them any more
+    card.append(el("p", "muted", "Both only move while you're working: a task running, a timer or revising."));
     box.append(card);
   }
   const card = el("section", "ring-card mail-card");
