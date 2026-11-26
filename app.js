@@ -51,7 +51,8 @@ import { noteLines, todayLines, todayLook, alarmsOf, alarmWhen, alarmOptions, al
          spinPrioGroups, SPIN_PRIO_COLOURS, sortOf, prevPrioDay, importPrio, sortPrio, quickStars, quickPick,
          draftParse, draftLeaves, draftDone, draftPickText, draftsOf, draftAsk, draftIncoming, DRAFT_MOST, DRAFT_TEXT_MAX,
          draftSelectKeys, draftMarksClean, draftMarksSame, draftPieces, draftSplitFix, draftColour,
-         companionOf, taskBarLeft, taskBarLook, taskBarWords, projectPct, lettersUnread } from "./logic.js";   // 2026-11-20c   // 2026-11-13c   // 2026-11-13: drafts   // 2026-10-23   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
+         companionOf, taskBarLeft, taskBarLook, taskBarWords, projectPct, lettersUnread,   // 2026-11-20c
+         draftNumberFix, draftNumberUndo } from "./logic.js";   // 2026-11-26   // 2026-11-13c   // 2026-11-13: drafts   // 2026-10-23   // 2026-10-20h, 20j   // 2026-10-20d, 20e   // 2026-10-19o: smart plan
 
 const $ = (id) => document.getElementById(id);
 // 2026-10-18b: a line's subject, by its words, from the bank's subject lists.
@@ -7190,7 +7191,17 @@ function drawPage() {
 const DRAFT_SEND_MS = 3000;
 const drafts = { current: recall("tutor-draft-open", ""), shown: "", boxes: new Map(), picks: [], built: false,
   pendingTicks: new Map(), pendingSent: new Map(), made: recall("tutor-drafts-made", []), gone: new Map(), names: new Map(),
-  symbols: {}, sayOnce: "", naming: "", sure: 0, day: "", lastRange: null };
+  symbols: {}, sayOnce: "", naming: "", sure: 0, day: "", lastRange: null,
+  lastInputMs: 0, undoFor: null, archived: new Map(), showArchived: false };   // 2026-11-26
+// 2026-11-26: "it keeps on when im writing a draft itll save by kinda
+// deleting stuff before re-showing it". While she's typing (the box has
+// the cursor and she typed in the last DRAFT_HOLD_MS) the box is never
+// redrawn: not by the tidy-up, not by the laptop's copy coming back.
+const DRAFT_HOLD_MS = 8000;
+function draftTyping(ms) {
+  return Boolean(drafts.area) && document.activeElement === drafts.area && Date.now() - drafts.lastInputMs < (ms || DRAFT_HOLD_MS);
+}
+const DRAFT_FIX_IDLE_MS = 2500;   // the tidy-up waits this long after her last key
 function draftList() {
   const found = draftsOf(state.alldays);
   const now = Date.now();
@@ -7200,6 +7211,9 @@ function draftList() {
   const list = found.list.filter((d) => !(drafts.gone.has(d.id) && now - drafts.gone.get(d.id) < 120000))
     .concat(drafts.made.map((m) => ({ id: m.id, name: m.name, text: "", version: "", done: new Set(), sent: new Set(), later: {}, marks: [], fresh: true })));
   list.forEach((d) => {
+    const flip = drafts.archived.get(d.id);   // 2026-11-26: archived here, laptop not told yet
+    if (flip && (d.archived === flip.on || now - flip.atMs > 120000)) drafts.archived.delete(d.id);
+    else if (flip) d.archived = flip.on;
     const named = drafts.names.get(d.id);
     if (named && named.name !== d.name && now - named.atMs < 120000) d.name = named.name; else drafts.names.delete(d.id);
   });
@@ -7227,8 +7241,31 @@ function draftBox(d) {
 // ">" in the middle of a line goes on its own line (">>" is a bold literal
 // one), in the box too, with the cursor where it was in her words.
 function draftFixBox(id, box) {
+  // 2026-11-26: not while she's typing (it waits for the next stop), and "Module 1-6" on a step becomes the six steps
+  if (drafts.shown === id && draftTyping(DRAFT_FIX_IDLE_MS)) return false;
+  const nums = draftNumberFix(box.text, box.marks);
+  if (nums.changed) {
+    let caret = -1;
+    const sel = getSelection();
+    if (drafts.shown === id && document.activeElement === drafts.area && sel.rangeCount && drafts.area.contains(sel.anchorNode)) {
+      caret = draftScan(drafts.area, { probes: [[sel.anchorNode, sel.anchorOffset]] }).at[0];
+    }
+    const lineStart = nums.made.length ? box.text.split("\n").slice(0, nums.made[0].line).join("\n").length : box.text.length;
+    const grew = nums.text.length - box.text.length;
+    box.text = nums.text;
+    box.marks = nums.marks;
+    if (nums.made.length) {
+      const m = nums.made[nums.made.length - 1];
+      drafts.undoFor = { id, made: m, atMs: Date.now() };
+      drafts.sayOnce = "Made " + m.words.replace("#", m.from) + " to " + m.words.replace("#", m.to) + ".";
+    }
+    if (drafts.shown === id) {
+      draftWrite(drafts.area, box.text, box.marks);
+      if (caret >= 0) { const c = Math.min(box.text.length, caret > lineStart ? caret + grew : caret); draftSetSel(c, c); }
+    }
+  }
   const fix = draftSplitFix(box.text, box.marks);
-  if (!fix.changed) return false;
+  if (!fix.changed) return nums.changed;
   const shown = drafts.shown === id && drafts.area;
   let caret = -1;
   if (shown) {
@@ -7258,6 +7295,7 @@ function draftSend(id) {
   const marks = draftMarksClean(box.marks, text);
   box.dirty = false;
   box.sent = { text, marks, base, atMs: Date.now() };
+  box.past = (box.past || []).concat([{ text, atMs: Date.now() }]).slice(-8);   // 2026-11-26: her own saves, so a late one is only an echo
   box.base = noteVersion(text);
   // marks go as one string: Firestore has no arrays inside arrays
   return sendEdit({ kind: "draft_save", id, name: d ? d.name : "Draft", text, marks: JSON.stringify(marks), base }).then((ok) => {
@@ -7392,6 +7430,7 @@ function draftEdited() {
   box.text = read.text;
   box.marks = draftMarksClean(read.marks, read.text);
   box.dirty = true;
+  drafts.lastInputMs = Date.now();   // 2026-11-26
   drafts.sayOnce = "";
   drafts.area.classList.toggle("empty", !read.text);
   draftUnsent(id, { text: box.text, marks: box.marks, base: box.base });
@@ -7578,8 +7617,19 @@ function draftBuild(tab) {
 }
 function draftNow() {
   const found = draftList();
-  if (!found.list.some((d) => d.id === drafts.current)) drafts.current = found.list.length ? found.list[0].id : "";
-  return { found, d: found.list.find((x) => x.id === drafts.current) || null };
+  const open = found.list.filter((x) => !x.archived);   // 2026-11-26: archived ones aren't opened
+  if (!open.some((d) => d.id === drafts.current)) drafts.current = open.length ? open[0].id : "";
+  return { found, d: open.find((x) => x.id === drafts.current) || null };
+}
+function draftArchive(id, on) {
+  const box = drafts.boxes.get(id);
+  if (on && box && box.dirty) draftSend(id);
+  drafts.archived.set(id, { on, atMs: Date.now() });
+  sendEdit({ kind: "draft_archive", id, archived: on }).catch(() => {});
+  if (!on) { drafts.current = id; keep("tutor-draft-open", id); drafts.showArchived = false; }
+  drafts.picks = [];
+  drafts.sayOnce = on ? "Archived. It's under Archived if you want it back." : "";
+  drawDrafts();
 }
 function drawDrafts() {
   const tab = $("tab-drafts");
@@ -7589,7 +7639,8 @@ function drawDrafts() {
   drafts.old.textContent = found.known || found.list.length ? "" : LAPTOP_OLD_WORDS + " Your drafts show up here once it has.";
   // The row of drafts, like subjects in a drafts folder.
   drafts.chips.replaceChildren();
-  found.list.forEach((one) => {
+  const shelved = found.list.filter((x) => x.archived);   // 2026-11-26
+  found.list.filter((x) => !x.archived).forEach((one) => {
     const chip = button(one.name, "draft-chip" + (one.id === drafts.current ? " on" : ""), () => {
       if (one.id === drafts.current) return;
       const was = drafts.boxes.get(drafts.current);
@@ -7612,7 +7663,13 @@ function drawDrafts() {
     drafts.nameBox.focus();
   };
   if (found.list.length < DRAFT_MOST) drafts.chips.append(button("+ New draft", "draft-chip new", () => naming("new", "")));
+  if (shelved.length) {
+    const shelf = button("Archived (" + shelved.length + ")", "draft-chip shelf" + (drafts.showArchived ? " on" : ""), () => { drafts.showArchived = !drafts.showArchived; drawDrafts(); });
+    shelf.setAttribute("aria-expanded", String(drafts.showArchived));
+    drafts.chips.append(shelf);
+  }
   if (d) {
+    drafts.chips.append(button("Archive", "quiet draft-tool", () => draftArchive(d.id, true)));   // 2026-11-26
     drafts.chips.append(button("Rename", "quiet draft-tool", () => naming("rename", d.name)));
     const sure = Date.now() < drafts.sure;
     drafts.chips.append(button(sure ? "Sure? Delete it" : "Delete", "quiet draft-tool" + (sure ? " warn" : ""), () => {
@@ -7630,12 +7687,39 @@ function drawDrafts() {
       drawDrafts();
     }));
   }
+  // 2026-11-26: "Archived tab, can bring back": the archived ones, each with Bring back / Delete
+  if (!drafts.shelf) { drafts.shelf = el("div", "draft-shelf"); drafts.chips.after(drafts.shelf); }
+  drafts.shelf.replaceChildren();
+  drafts.shelf.hidden = !(drafts.showArchived && shelved.length);
+  if (!drafts.shelf.hidden) {
+    shelved.forEach((one) => {
+      const row = el("div", "draft-shelf-row");
+      const name = el("span", "draft-shelf-name", one.name);
+      name.style.setProperty("--chip", draftColour(one.name));
+      const lines = one.text.split("\n").filter((l) => l.trim()).length;
+      row.append(name, el("span", "muted", lines + " line" + (lines === 1 ? "" : "s")),
+        button("Bring back", "soft", () => draftArchive(one.id, false)),
+        button("Delete", "quiet", () => {
+          drafts.gone.set(one.id, Date.now());
+          sendEdit({ kind: "draft_del", id: one.id });
+          drawDrafts();
+        }));
+      drafts.shelf.append(row);
+    });
+  }
   drafts.cols.hidden = !d;
   if (!d) { drafts.shown = ""; return; }
   const box = draftBox(d);
   const got = draftIncoming(box, d.fresh ? null : { text: d.text, version: d.version, marks: d.marks }, Date.now());
   box.base = got.base;
   box.sent = got.sent;
+  if (got.set && draftTyping() && drafts.shown === d.id) {
+    // 2026-11-26: she's typing: her box stays as it is, and what she has goes up again
+    got.set = false;
+    box.dirty = true;
+    clearTimeout(box.timer);
+    box.timer = setTimeout(() => draftSend(d.id), DRAFT_SEND_MS);
+  }
   if (got.set) { box.text = got.text; box.marks = got.marks || []; }
   if (drafts.shown !== d.id || got.set) {
     const here = draftScan(drafts.area);
@@ -7652,7 +7736,27 @@ function drawDrafts() {
     drafts.area.classList.toggle("empty", !box.text);
   }
   drafts.said.textContent = drafts.sayOnce || got.words;
+  // 2026-11-26: "when it expands i can click somewhere to be like convert back"
+  const undo = drafts.undoFor;
+  if (undo && undo.id === d.id && Date.now() - undo.atMs < 120000) {
+    drafts.said.append(" ", button("Undo, keep it as " + undo.made.from + "-" + undo.made.to, "quiet draft-undo", () => draftUndoNumbers(d.id)));
+  } else drafts.undoFor = null;
   drawDraftLook();
+}
+function draftUndoNumbers(id) {
+  const undo = drafts.undoFor;
+  const box = drafts.boxes.get(id);
+  drafts.undoFor = null;
+  if (!undo || !box || undo.id !== id) return;
+  const back = draftNumberUndo(box.text, undo.made);
+  if (back === null) { drafts.sayOnce = "Couldn't put that back: the lines have changed."; drawDrafts(); return; }
+  box.text = back;
+  box.marks = draftMarksClean(box.marks, back);
+  if (drafts.shown === id) draftWrite(drafts.area, box.text, box.marks);
+  box.dirty = true;
+  drafts.sayOnce = "Back to " + undo.made.from + "-" + undo.made.to + ", kept as words.";
+  draftSend(id);
+  drawDrafts();
 }
 // The right-hand side only: never touches the box she's typing in.
 function drawDraftLook() {
