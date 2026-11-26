@@ -1448,3 +1448,11 @@ button.has-new[data-count]::after {
   background: var(--card, #fff); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
 }
 .mail-toast p { margin: 0 0 10px; font-weight: 500; }
+
+/* 2026-11-26: archived drafts ("Archived tab, can bring back") and the
+   numbers' Undo */
+.draft-shelf { display: grid; gap: 8px; margin: 10px 0 4px; padding: 12px; border-radius: 14px; background: var(--soft); }
+.draft-shelf-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.draft-shelf-name { font-weight: 700; border-left: 4px solid var(--chip, var(--accent)); padding-left: 8px; flex: 1 1 auto; }
+.draft-chip.shelf { font-style: italic; }
+.draft-undo { padding: 2px 10px; min-height: 28px; font-size: 0.85rem; }
