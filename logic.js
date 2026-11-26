@@ -1684,7 +1684,7 @@ export const CAL_LOCK_HOUR = 5;
 
 // 2026-10-17b: "version of the pwa. just a little thing in the left menu".
 // The same number as sw.js's cache: change both together.
-export const APP_VERSION = "v111";   // 2026-11-21: was v110 (2026-11-20f: was v109 (2026-11-20c: was v108 (2026-11-20: was v107 (2026-11-19: was v106 (2026-11-13c: was v105 (2026-11-13: was v104 (2026-11-10e: was v103 (2026-11-10: was v102 (2026-11-07b: was v101 (2026-11-07: was v100 (2026-11-06c: was v99 (2026-10-30e: was v98 (2026-10-30d: was v97 (2026-10-30c: was v96 (2026-10-30b: was v95 (2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81)))))))))))))))))
+export const APP_VERSION = "v112";   // 2026-11-26: was v111 (2026-11-21: was v110 (2026-11-20f: was v109 (2026-11-20c: was v108 (2026-11-20: was v107 (2026-11-19: was v106 (2026-11-13c: was v105 (2026-11-13: was v104 (2026-11-10e: was v103 (2026-11-10: was v102 (2026-11-07b: was v101 (2026-11-07: was v100 (2026-11-06c: was v99 (2026-10-30e: was v98 (2026-10-30d: was v97 (2026-10-30c: was v96 (2026-10-30b: was v95 (2026-10-30: was v94 (2026-10-29: was v93 (26: was v92 (25g: was v91 (25f: was v90). 2026-10-25f: was v90 (24d and 24e: was v89 (24b: was v88) (24: was v87) (23d: was v86) (23b: was v85) (23: was v84) (22b: was v82, 22: was v81))))))))))))))))))
 
 // 2026-10-17b: "in calender, by default, set the height where u will be on
 // as where the red bar is". With today showing, it opens with now about an
@@ -3783,7 +3783,8 @@ export function draftsOf(live) {
     list: list.filter((x) => x && x.id).map((x) => ({ id: String(x.id), name: String(x.name || "Draft"), text: String(x.text || ""),
       version: String(x.version || ""), done: new Set((x.done || []).map(String)), sent: new Set((x.sent || []).map(String)),
       later: x.later && typeof x.later === "object" && !Array.isArray(x.later) ? { ...x.later } : {},   // 2026-11-13c: on a day to come
-      marks: draftMarksClean(x.marks, String(x.text || "")) })),
+      marks: draftMarksClean(x.marks, String(x.text || "")),
+      archived: Boolean(x.archived) })),   // 2026-11-26: "drafts should have an archive feature"
     symbols: d && d.symbols && typeof d.symbols === "object" ? { ...d.symbols } : {} };
 }
 // The one question about a symbol she hasn't explained: {symbol, words, choices}.
@@ -3802,6 +3803,11 @@ export function draftIncoming(box, snap, nowMs) {
   if (!snap) return { ...keep, words: box.sent ? "Sent. The laptop takes it in a few seconds while the tutor is open." : "" };
   const theirs = String(snap.text || ""), version = String(snap.version || "");
   const theirMarks = snap.marks || [];
+  // 2026-11-26: "when im writing a draft itll save by kinda deleting stuff
+  // before re-showing it". An older save of hers coming back late is only
+  // an echo: it never takes her newer words out of the box.
+  const echo = (box.past || []).some((p) => p.text === theirs && nowMs - p.atMs < 180000);
+  if (echo && theirs !== box.text) return { ...keep, base: box.sent ? box.base : version, words: "Saving..." };
   let sent = box.sent || null;
   if (sent) {
     if (theirs === sent.text && draftMarksSame(theirMarks, sent.marks)) sent = null;
@@ -3978,4 +3984,64 @@ export function taskEstimateMinutes(text) {
   f = new RegExp("(?<![\\d.])(\\d{1,3})\\s*" + M + "(?![a-z])").exec(low);
   if (f && Number(f[1]) >= 1 && Number(f[1]) <= 300) return Number(f[1]);
   return 0;
+}
+
+// ---- 2026-11-26: "there is no auto numbering optnio , where i auto adds
+// numbers in subtasks taht range form x to z. if i want it to be like
+// module # or whatever then itll be different" / "1 but i can do -- and
+// itll become - only and yk act as text or when it expands i can click
+// somewhere to be like convert back". A step with a range in it ("> Module
+// 1-6", "'--> past paper 3-5") becomes one step a number, the words kept
+// round it. "1--6" stays as text: a hyphen that's never a range (‑).
+export const DRAFT_RANGE_MOST = 30;
+export const DRAFT_DASH = "‑";
+const STEP_LINE = /^([ \t]+(?:'?[ \t]*-{1,3}>|>)|'[ \t]*-{1,3}>)([ \t]*)(.*)$/;
+const RANGE = /(^|[^\d.\-‑\/])(\d{1,3})[ \t]*(--|[-–])[ \t]*(\d{1,3})(?![\d.\-‑\/])/;
+export function draftNumberFix(text, marks) {
+  const src = String(text || "");
+  const lines = src.split("\n");
+  const outLines = [];
+  const made = [];
+  const map = new Array(src.length + 1).fill(0);
+  let pos = 0, out = 0, changed = false;
+  lines.forEach((line, li) => {
+    let result = [line];
+    const step = line.match(STEP_LINE);
+    if (step) {
+      const body = step[3];
+      const r = body.match(RANGE);
+      if (r) {
+        const a = Number(r[2]), b = Number(r[4]);
+        const at = r.index + r[1].length, end = r.index + r[0].length;
+        if (r[3] === "--") {
+          result = [step[1] + step[2] + body.slice(0, at) + r[2] + DRAFT_DASH + r[4] + body.slice(end)];
+        } else if (b > a && b - a + 1 <= DRAFT_RANGE_MOST) {
+          result = [];
+          for (let n = a; n <= b; n++) result.push(step[1] + step[2] + body.slice(0, at) + n + body.slice(end));
+          made.push({ line: li, from: a, to: b, words: (body.slice(0, at) + "#" + body.slice(end)).trim(), original: line });
+        }
+      }
+    }
+    const joined = result.join("\n");
+    if (joined !== line) changed = true;
+    // offsets in this line point at the same place in the first copy (or the end of it)
+    for (let j = 0; j <= line.length; j++) map[pos + j] = out + Math.min(j, result[0].length);
+    pos += line.length + 1;
+    out += joined.length + 1;
+    outLines.push(joined);
+  });
+  const textOut = outLines.join("\n");
+  const marksOut = (marks || []).map((m) => [map[Math.min(m[0], src.length)], map[Math.min(m[1], src.length)], m[2]]).filter((m) => m[1] > m[0]);
+  return { text: textOut, marks: draftMarksClean(marksOut, textOut), changed, made };
+}
+// Back from a range: the line as she typed it, its dash kept as text so it
+// doesn't come straight back. {from, to, original} from draftNumberFix.
+export function draftNumberUndo(text, made) {
+  if (!made) return null;
+  const lines = String(text || "").split("\n");
+  const count = made.to - made.from + 1;
+  if (made.line < 0 || made.line + count > lines.length) return null;
+  const kept = String(made.original || "").replace(RANGE, (all, lead, a, dash, b) => lead + a + DRAFT_DASH + b);
+  lines.splice(made.line, count, kept);
+  return lines.join("\n");
 }
